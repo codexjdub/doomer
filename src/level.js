@@ -1,0 +1,396 @@
+// The level: a grid of 1 m cells (laid out in map.js). Each character is
+// either a cell preset (walls, floors at different heights, lava, doors) or
+// an entity that stands on the floor of a neighbouring cell.
+import * as THREE from 'three';
+import { buildMap } from './map.js';
+
+export const MAP = buildMap();
+
+// Cell presets. floor/ceil are heights in metres. ftex/ctex/side name the
+// materials for the floor, ceiling and the step faces this cell exposes to
+// lower neighbours.
+const room = (floor, ceil, ftex, ctex, side, extra = {}) => ({ floor, ceil, ftex, ctex, side, ...extra });
+const sky = (floor, ftex, side = 'stone') => room(floor, 12, ftex, null, side, { sky: true });
+
+export const PRESETS = {
+  '#': { solid: true, wall: 'stone' },
+  'M': { solid: true, wall: 'panel' },
+  'T': { solid: true, wall: 'tech' },
+  // Start room and exit room
+  '.': room(0, 4.5, 'metalFloor', 'ceiling', 'panel'),
+  'N': room(1.2, 4.5, 'crate', 'ceiling', 'crate'),
+  'E': room(0, 4, 'metalFloor', 'ceiling', 'panel'),
+  // Corridors
+  ',': room(0, 3.2, 'grate', 'ceiling', 'panel'),
+  'q': room(2, 5.2, 'grate', 'ceiling', 'panel'),
+  // Lava hall
+  'o': room(0, 8, 'metalFloor', 'stone', 'stone'),
+  'p': room(2, 8, 'metalFloor', 'stone', 'stone'),
+  'a': room(.4, 8, 'metalFloor', 'stone', 'panel'),
+  'b': room(.8, 8, 'metalFloor', 'stone', 'panel'),
+  'c': room(1.2, 8, 'metalFloor', 'stone', 'panel'),
+  'd': room(1.6, 8, 'metalFloor', 'stone', 'panel'),
+  '~': room(-.6, 8, 'lava', 'stone', 'stone', { lava: true }),
+  '=': room(0, 8, 'grate', 'stone', 'panel'),
+  // Courtyard (open sky)
+  ':': sky(0, 'rock'),
+  ';': sky(1.6, 'metalFloor'),
+  'f': sky(.4, 'stone'),
+  'g': sky(.8, 'stone'),
+  'h': sky(1.2, 'stone'),
+  // Tech room
+  '_': room(0, 5, 'metalFloor', 'ceiling', 'panel'),
+  'n': room(1.2, 5, 'crate', 'ceiling', 'crate'),
+  // Arena
+  'x': room(0, 9, 'metalFloor', 'stone', 'stone'),
+  '*': room(-.6, 9, 'lava', 'stone', 'stone', { lava: true }),
+  'r': room(.4, 9, 'metalFloor', 'stone', 'panel'),
+  // Doors: plain, red keycard, and the one that opens when the boss dies
+  'D': room(0, 3.2, 'grate', 'ceiling', 'panel', { door: 'plain' }),
+  'R': room(0, 3.2, 'grate', 'ceiling', 'panel', { door: 'red' }),
+  'B': room(0, 3.2, 'grate', 'ceiling', 'panel', { door: 'boss' }),
+};
+
+// @ player start   I imp   Z brute   W warlord (boss)
+// + health  H medkit  A armor  S shells  U bullets
+// G shotgun  C chaingun  K red keycard  L ceiling lamp  F torch  X exit
+export const ENTITY_CHARS = '@IZW+HASUGCKLFX';
+
+const OUTSIDE = { solid: true, wall: 'stone', floor: 0, ceil: 0 };
+const DIRS = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+
+export class Level {
+  constructor(rows = MAP) {
+    this.h = rows.length;
+    this.w = Math.max(...rows.map((r) => r.length));
+    this.cells = [];
+    this.entities = [];
+    this.doors = [];
+
+    for (let z = 0; z < this.h; z++) {
+      for (let x = 0; x < this.w; x++) {
+        let ch = rows[z][x] ?? '#';
+        if (ENTITY_CHARS.includes(ch)) {
+          this.entities.push({ type: ch, x: x + .5, z: z + .5 });
+          ch = inheritPreset(rows, x, z);
+        }
+        const p = PRESETS[ch] || PRESETS['#'];
+        this.cells.push({
+          x, z, ch,
+          solid: !!p.solid,
+          wall: p.wall,
+          floor: p.floor ?? 0,
+          ceil: p.ceil ?? 0,
+          ftex: p.ftex,
+          ctex: p.ctex,
+          side: p.side || 'panel',
+          sky: !!p.sky,
+          lava: !!p.lava,
+          doorType: p.door || null,
+          door: null,
+        });
+      }
+    }
+    for (const e of this.entities) e.y = this.at(e.x, e.z).floor;
+    this.groupDoors();
+    this.dist = new Float32Array(this.w * this.h).fill(Infinity);
+    this.queue = new Int32Array(this.w * this.h);
+  }
+
+  groupDoors() {
+    for (const c of this.cells) {
+      if (!c.doorType || c.door) continue;
+      const door = { type: c.doorType, cells: [], pos: 0, target: 0, floor: c.floor, ceil: c.ceil, mesh: null };
+      const stack = [c];
+      c.door = door;
+      while (stack.length) {
+        const d = stack.pop();
+        door.cells.push(d);
+        for (const [dx, dz] of DIRS) {
+          const n = this.cell(d.x + dx, d.z + dz);
+          if (n.doorType === c.doorType && !n.door) {
+            n.door = door;
+            stack.push(n);
+          }
+        }
+      }
+      door.minX = Math.min(...door.cells.map((d) => d.x));
+      door.maxX = Math.max(...door.cells.map((d) => d.x)) + 1;
+      door.minZ = Math.min(...door.cells.map((d) => d.z));
+      door.maxZ = Math.max(...door.cells.map((d) => d.z)) + 1;
+      door.cx = (door.minX + door.maxX) / 2;
+      door.cz = (door.minZ + door.maxZ) / 2;
+      door.height = door.ceil - door.floor;
+      this.doors.push(door);
+    }
+  }
+
+  cell(x, z) {
+    if (x < 0 || z < 0 || x >= this.w || z >= this.h) return OUTSIDE;
+    return this.cells[z * this.w + x];
+  }
+
+  at(px, pz) {
+    return this.cell(Math.floor(px), Math.floor(pz));
+  }
+
+  blocked(c) {
+    return c.solid || (c.door !== null && c.door !== undefined && c.door.pos < Math.min(2.1, c.door.height - .05));
+  }
+
+  // ------------------------------------------------------------ geometry
+
+  build(materials) {
+    const groups = {};
+    const group = (name) => groups[name] || (groups[name] = { pos: [], nrm: [], uv: [], idx: [] });
+    const scaleOf = (name) => materials[name].userData.scale || 2;
+
+    const quad = (name, verts, n, uvs) => {
+      const g = group(name), base = g.pos.length / 3;
+      for (let i = 0; i < 4; i++) {
+        g.pos.push(...verts[i]);
+        g.nrm.push(...n);
+        g.uv.push(...uvs[i]);
+      }
+      g.idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+    };
+
+    // A vertical face along the cell edge a→b; the winding makes it face the
+    // cell being processed.
+    const wall = (name, ax, az, bx, bz, y0, y1) => {
+      if (y1 - y0 < .001) return;
+      const s = scaleOf(name), dx = bx - ax, dz = bz - az;
+      const u0 = (ax + az) / s, u1 = (bx + bz) / s;
+      quad(name, [[ax, y0, az], [bx, y0, bz], [bx, y1, bz], [ax, y1, az]], [-dz, 0, dx],
+        [[u0, y0 / s], [u1, y0 / s], [u1, y1 / s], [u0, y1 / s]]);
+    };
+
+    for (const c of this.cells) {
+      if (c.solid) continue;
+      const { x, z } = c;
+      const edges = [
+        [this.cell(x - 1, z), x, z + 1, x, z],
+        [this.cell(x + 1, z), x + 1, z, x + 1, z + 1],
+        [this.cell(x, z - 1), x, z, x + 1, z],
+        [this.cell(x, z + 1), x + 1, z + 1, x, z + 1],
+      ];
+      for (const [n, ax, az, bx, bz] of edges) {
+        if (n.solid) {
+          wall(n.wall, ax, az, bx, bz, c.floor, c.ceil);
+          continue;
+        }
+        if (n.floor > c.floor) wall(n.side, ax, az, bx, bz, c.floor, Math.min(n.floor, c.ceil));
+        if (n.ceil < c.ceil) wall(n.side, ax, az, bx, bz, Math.max(n.ceil, c.floor), c.ceil);
+      }
+      const fs = scaleOf(c.ftex);
+      quad(c.ftex, [[x, c.floor, z], [x, c.floor, z + 1], [x + 1, c.floor, z + 1], [x + 1, c.floor, z]], [0, 1, 0],
+        [[x / fs, z / fs], [x / fs, (z + 1) / fs], [(x + 1) / fs, (z + 1) / fs], [(x + 1) / fs, z / fs]]);
+      if (!c.sky) {
+        const cs = scaleOf(c.ctex);
+        quad(c.ctex, [[x, c.ceil, z], [x + 1, c.ceil, z], [x + 1, c.ceil, z + 1], [x, c.ceil, z + 1]], [0, -1, 0],
+          [[x / cs, z / cs], [(x + 1) / cs, z / cs], [(x + 1) / cs, (z + 1) / cs], [x / cs, (z + 1) / cs]]);
+      }
+    }
+
+    const meshes = [];
+    for (const [name, g] of Object.entries(groups)) {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(g.pos, 3));
+      geo.setAttribute('normal', new THREE.Float32BufferAttribute(g.nrm, 3));
+      geo.setAttribute('uv', new THREE.Float32BufferAttribute(g.uv, 2));
+      geo.setIndex(g.idx);
+      geo.computeBoundingSphere();
+      const mesh = new THREE.Mesh(geo, materials[name]);
+      mesh.receiveShadow = name !== 'lava';
+      mesh.castShadow = name !== 'lava';
+      mesh.matrixAutoUpdate = false;
+      meshes.push(mesh);
+    }
+
+    const doorMats = { plain: materials.doorPlain, red: materials.doorRed, boss: materials.doorBoss };
+    for (const d of this.doors) {
+      const w = d.maxX - d.minX, depth = d.maxZ - d.minZ;
+      const alongX = w >= depth;
+      const geo = new THREE.BoxGeometry(alongX ? w : .5, d.height, alongX ? .5 : depth);
+      d.mesh = new THREE.Mesh(geo, doorMats[d.type]);
+      d.mesh.castShadow = d.mesh.receiveShadow = true;
+      d.mesh.position.set(d.cx, d.floor + d.height / 2, d.cz);
+      meshes.push(d.mesh);
+    }
+    return meshes;
+  }
+
+  // ------------------------------------------------------------ doors
+
+  updateDoors(dt, onMoveStart) {
+    for (const d of this.doors) {
+      if (d.pos === d.target) continue;
+      if (!d.moving) {
+        d.moving = true;
+        onMoveStart?.(d);
+      }
+      d.pos = Math.min(d.target, d.pos + dt * 2.6);
+      if (d.pos === d.target) d.moving = false;
+      d.mesh.position.y = d.floor + d.height / 2 + d.pos;
+    }
+  }
+
+  resetDoors() {
+    for (const d of this.doors) {
+      d.pos = d.target = 0;
+      d.moving = false;
+      d.mesh.position.y = d.floor + d.height / 2;
+    }
+  }
+
+  // ------------------------------------------------------------ collision
+
+  // Can a vertical cylinder of radius r stand at (px, pz) with its feet at
+  // `feet`, given it can climb `step` and needs `height` of headroom?
+  fits(px, pz, r, feet, step, height) {
+    const x0 = Math.floor(px - r), x1 = Math.floor(px + r);
+    const z0 = Math.floor(pz - r), z1 = Math.floor(pz + r);
+    for (let z = z0; z <= z1; z++) {
+      for (let x = x0; x <= x1; x++) {
+        const c = this.cell(x, z);
+        const bad = this.blocked(c) || c.floor > feet + step || c.ceil - Math.max(c.floor, feet) < height;
+        if (!bad) continue;
+        const nx = Math.max(x, Math.min(px, x + 1)), nz = Math.max(z, Math.min(pz, z + 1));
+        if ((px - nx) ** 2 + (pz - nz) ** 2 < r * r) return false;
+      }
+    }
+    return true;
+  }
+
+  // Highest floor and lowest ceiling under a cylinder footprint.
+  span(px, pz, r) {
+    const x0 = Math.floor(px - r), x1 = Math.floor(px + r);
+    const z0 = Math.floor(pz - r), z1 = Math.floor(pz + r);
+    let floor = -Infinity, ceil = Infinity;
+    for (let z = z0; z <= z1; z++) {
+      for (let x = x0; x <= x1; x++) {
+        const c = this.cell(x, z);
+        if (this.blocked(c)) continue;
+        const nx = Math.max(x, Math.min(px, x + 1)), nz = Math.max(z, Math.min(pz, z + 1));
+        if ((px - nx) ** 2 + (pz - nz) ** 2 >= r * r) continue;
+        floor = Math.max(floor, c.floor);
+        ceil = Math.min(ceil, c.ceil);
+      }
+    }
+    if (floor === -Infinity) {
+      const c = this.at(px, pz);
+      return { floor: c.floor, ceil: c.ceil };
+    }
+    return { floor, ceil };
+  }
+
+  // Is point p inside open space?
+  open(x, y, z) {
+    const c = this.at(x, z);
+    return !this.blocked(c) && y >= c.floor && y <= c.ceil;
+  }
+
+  lineOfSight(a, b) {
+    const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+    const len = Math.hypot(dx, dy, dz), steps = Math.ceil(len / .25);
+    for (let i = 1; i < steps; i++) {
+      const t = i / steps;
+      if (!this.open(a.x + dx * t, a.y + dy * t, a.z + dz * t)) return false;
+    }
+    return true;
+  }
+
+  // March a ray through the level. Returns distance, point and surface normal.
+  raycast(o, d, maxDist = 80) {
+    const step = .08;
+    let px = o.x, py = o.y, pz = o.z;
+    for (let t = step; t <= maxDist; t += step) {
+      const x = o.x + d.x * t, y = o.y + d.y * t, z = o.z + d.z * t;
+      if (this.open(x, y, z)) {
+        px = x; py = y; pz = z;
+        continue;
+      }
+      // Refine the boundary between the last free point and this one.
+      let lo = t - step, hi = t;
+      for (let i = 0; i < 8; i++) {
+        const mid = (lo + hi) / 2;
+        if (this.open(o.x + d.x * mid, o.y + d.y * mid, o.z + d.z * mid)) lo = mid; else hi = mid;
+      }
+      px = o.x + d.x * lo; py = o.y + d.y * lo; pz = o.z + d.z * lo;
+      const hx = o.x + d.x * hi, hy = o.y + d.y * hi, hz = o.z + d.z * hi;
+      const normal = new THREE.Vector3();
+      const cellA = this.at(px, pz), cellB = this.at(hx, hz);
+      if (cellA === cellB) {
+        normal.set(0, hy < cellA.floor ? 1 : -1, 0);
+      } else if (Math.floor(px) !== Math.floor(hx)) {
+        normal.set(Math.sign(px - hx), 0, 0);
+      } else {
+        normal.set(0, 0, Math.sign(pz - hz));
+      }
+      return { dist: lo, point: new THREE.Vector3(px, py, pz), normal };
+    }
+    return null;
+  }
+
+  // ------------------------------------------------------------ pathfinding
+
+  // Breadth-first flood from the player's cell. Monsters walk downhill on
+  // this distance field to find their way around walls and up stairs.
+  updateFlow(px, pz) {
+    const { w, cells, dist, queue } = this;
+    dist.fill(Infinity);
+    const sx = Math.floor(px), sz = Math.floor(pz);
+    if (sx < 0 || sz < 0 || sx >= w || sz >= this.h) return;
+    let head = 0, tail = 0;
+    const start = sz * w + sx;
+    dist[start] = 0;
+    queue[tail++] = start;
+    while (head < tail) {
+      const i = queue[head++], c = cells[i];
+      for (const [dx, dz] of DIRS) {
+        const nx = c.x + dx, nz = c.z + dz;
+        if (nx < 0 || nz < 0 || nx >= w || nz >= this.h) continue;
+        const j = nz * w + nx;
+        if (dist[j] !== Infinity) continue;
+        const n = cells[j];
+        if (this.blocked(n) || n.lava || n.ceil - n.floor < 2) continue;
+        if (c.floor - n.floor > .6) continue;
+        dist[j] = dist[i] + 1;
+        queue[tail++] = j;
+      }
+    }
+  }
+
+  flowAt(x, z) {
+    if (x < 0 || z < 0 || x >= this.w || z >= this.h) return Infinity;
+    return this.dist[z * this.w + x];
+  }
+
+  // Direction to walk from (px, pz) toward the player, or null if unreachable.
+  flowDir(px, pz) {
+    const cx = Math.floor(px), cz = Math.floor(pz);
+    let best = this.flowAt(cx, cz), bx = 0, bz = 0;
+    for (let dz = -1; dz <= 1; dz++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dz) continue;
+        const d = this.flowAt(cx + dx, cz + dz);
+        if (d >= best) continue;
+        if (dx && dz && (this.flowAt(cx + dx, cz) === Infinity || this.flowAt(cx, cz + dz) === Infinity)) continue;
+        best = d;
+        bx = dx;
+        bz = dz;
+      }
+    }
+    if (!bx && !bz) return null;
+    const tx = cx + bx + .5 - px, tz = cz + bz + .5 - pz, l = Math.hypot(tx, tz) || 1;
+    return { x: tx / l, z: tz / l };
+  }
+}
+
+function inheritPreset(rows, x, z) {
+  for (const [dx, dz] of DIRS) {
+    const c = rows[z + dz]?.[x + dx];
+    if (c && PRESETS[c] && !PRESETS[c].solid && !PRESETS[c].door) return c;
+  }
+  return '.';
+}

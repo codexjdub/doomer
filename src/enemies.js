@@ -1,0 +1,498 @@
+// Monsters: sculpted models (see monsters.js), animated procedurally, and
+// driven by a small state machine (idle → chase → attack / pain → dead).
+import * as THREE from 'three';
+import { createMonster } from './monsters.js';
+
+export const TYPES = {
+  imp: {
+    hp: 60, speed: 3.4, radius: .5, height: 2.5, pain: .75, ranged: true,
+    melee: [6, 12], reach: 1.4, missile: [9, 16], sight: 'impSight', scale: 1.15,
+  },
+  brute: {
+    hp: 170, speed: 6.6, radius: .75, height: 2.1, pain: .45, ranged: false,
+    melee: [14, 26], reach: 1.6, sight: 'bruteSight', scale: 1,
+  },
+  boss: {
+    hp: 1600, speed: 2.8, radius: 1.2, height: 5.4, pain: .06, ranged: true,
+    melee: [22, 36], reach: 2.8, missile: [16, 26], sight: 'bossSight', scale: 2.3,
+  },
+};
+
+const randInt = ([a, b]) => a + Math.floor(Math.random() * (b - a + 1));
+const lerp = (a, b, t) => a + (b - a) * t;
+const tmp = new THREE.Vector3();
+const ZERO = [0, 0, 0];
+
+// ---------------------------------------------------------------- enemy
+
+export class Enemy {
+  constructor(game, type, x, y, z) {
+    this.type = type;
+    this.def = TYPES[type];
+    this.hp = this.def.hp;
+    this.pos = new THREE.Vector3(x, y, z);
+    this.vy = 0;
+    this.yaw = Math.random() * Math.PI * 2;
+    this.state = 'idle';
+    this.timer = 0;
+    this.cooldown = 0;
+    this.anim = Math.random() * 10;
+    this.walkPhase = 0;
+    this.swing = 0;
+    this.flash = 0;
+    this.sightTimer = Math.random() * .3;
+    this.sees = false;
+    this.stuck = 0;
+    this.seed = Math.random() * 10;
+    this.dead = false;
+    this.model = createMonster(type);
+    this.model.root.scale.setScalar(this.def.scale);
+    this.model.root.position.copy(this.pos);
+    this.model.root.rotation.y = this.yaw;
+    this.bodyY = this.model.parts.body.position.y;
+    this.glowBase = this.model.material.userData.uniforms.glowStrength.value;
+    game.scene.add(this.model.root);
+    if (this.model.parts.core) {
+      this.glow = game.lights.add({ pos: new THREE.Vector3(), color: 0xff5020, intensity: 30, range: 9, flicker: 1 });
+    }
+  }
+
+  eye() {
+    return new THREE.Vector3(this.pos.x, this.pos.y + this.def.height * .85, this.pos.z);
+  }
+
+  wake(g) {
+    if (this.state !== 'idle') return;
+    this.state = 'chase';
+    this.cooldown = .4 + Math.random() * .6;
+    g.sound.play(this.def.sight, this.pos);
+  }
+
+  update(dt, g) {
+    if (this.dead) return;
+    const p = g.player, T = this.def;
+    this.anim += dt;
+    if (this.flash > 0) {
+      this.flash -= dt;
+      this.model.material.userData.uniforms.flash.value = this.flash > 0 ? .5 : 0;
+    }
+    if (this.glow) this.glow.pos.copy(this.pos).setY(this.pos.y + 3.5);
+
+    this.sightTimer -= dt;
+    if (this.sightTimer <= 0) {
+      this.sightTimer = .2 + Math.random() * .1;
+      const eye = this.eye(), pe = p.eye();
+      this.sees = !p.dead && eye.distanceTo(pe) < 42 && g.level.lineOfSight(eye, pe);
+    }
+
+    if (this.state === 'idle') {
+      this.idleAnim();
+      if (this.sees) this.wake(g);
+      this.physics(dt, g, 0, 0);
+      return;
+    }
+
+    const dx = p.pos.x - this.pos.x, dz = p.pos.z - this.pos.z, dist = Math.hypot(dx, dz) || .001;
+    const toPlayer = Math.atan2(dx, dz);
+
+    if (this.state === 'pain') {
+      this.timer -= dt;
+      const k = Math.min(1, (.22 - this.timer) * 12);
+      this.pose('body', -.35 * k);
+      this.pose('head', -.3 * k, 0, .15 * k);
+      this.pose('jaw', .5 * k);
+      if (this.timer <= 0) this.state = 'chase';
+      this.physics(dt, g, 0, 0);
+      return;
+    }
+
+    if (this.state === 'attack') {
+      this.timer -= dt;
+      this.turnTo(toPlayer, dt, 9);
+      this.attackPose();
+      if (!this.fired && this.timer <= this.fireAt) {
+        this.fired = true;
+        if (this.kind === 'melee') this.strike(g, dist); else this.shoot(g);
+      }
+      if (this.timer <= 0) {
+        this.state = 'chase';
+        this.cooldown = this.type === 'boss' ? 1.2 + Math.random() * 1.4
+          : this.type === 'brute' ? .5 + Math.random() * .4
+            : .9 + Math.random() * 1.6;
+      }
+      this.physics(dt, g, 0, 0);
+      return;
+    }
+
+    // chase
+    this.cooldown -= dt;
+    const reach = T.reach + T.radius + p.radius;
+    const level = Math.abs(p.pos.y - this.pos.y) < 1.5;
+    if (this.cooldown <= 0 && !p.dead) {
+      if (dist < reach && level) {
+        this.startAttack('melee', g);
+      } else if (T.ranged && this.sees && dist < 34 && Math.random() < (this.type === 'boss' ? .85 : .5)) {
+        this.startAttack('ranged', g);
+      } else {
+        this.cooldown = .3 + Math.random() * .4;
+      }
+      if (this.state === 'attack') return;
+    }
+
+    let mx = 0, mz = 0;
+    if (!(dist < reach * .8 && level) && !p.dead) {
+      let dir = null;
+      if (this.sees && dist < 10 && level) dir = { x: dx / dist, z: dz / dist };
+      else dir = g.level.flowDir(this.pos.x, this.pos.z) || (this.sees ? { x: dx / dist, z: dz / dist } : null);
+      if (dir) {
+        mx = dir.x;
+        mz = dir.z;
+        if (this.type === 'imp' && this.sees && dist > 4) {
+          const s = Math.sin(this.anim * 1.4 + this.seed) * .7;
+          mx += -dir.z * s;
+          mz += dir.x * s;
+        }
+      }
+      if (this.stuck > 0) {
+        this.stuck -= dt;
+        mx = this.sideX;
+        mz = this.sideZ;
+      }
+    }
+    const moving = mx !== 0 || mz !== 0;
+    const speed = T.speed * (this.type === 'boss' && this.hp < T.hp / 2 ? 1.4 : 1);
+    if (moving) {
+      const l = Math.hypot(mx, mz);
+      mx /= l;
+      mz /= l;
+      this.turnTo(this.sees && dist < 12 ? toPlayer : Math.atan2(mx, mz), dt, 7);
+    } else {
+      this.turnTo(toPlayer, dt, 7);
+    }
+    const moved = this.physics(dt, g, mx * speed, mz * speed);
+    if (moving && !moved && this.stuck <= 0) {
+      this.stuck = .4 + Math.random() * .4;
+      const side = Math.random() < .5 ? 1 : -1;
+      this.sideX = -mz * side;
+      this.sideZ = mx * side;
+    }
+    this.walkAnim(dt, moving ? speed : 0);
+  }
+
+  turnTo(target, dt, rate) {
+    let d = target - this.yaw;
+    d = Math.atan2(Math.sin(d), Math.cos(d));
+    this.yaw += d * Math.min(1, dt * rate);
+  }
+
+  physics(dt, g, vx, vz) {
+    const L = g.level, T = this.def, r = T.radius, step = .65;
+    let moved = false;
+    const here = L.at(this.pos.x, this.pos.z);
+    const safe = (x, z) => here.lava || !L.at(x, z).lava;
+    if (vx) {
+      const nx = this.pos.x + vx * dt;
+      if (safe(nx, this.pos.z) && L.fits(nx, this.pos.z, r, this.pos.y, step, T.height)) {
+        this.pos.x = nx;
+        moved = true;
+      }
+    }
+    if (vz) {
+      const nz = this.pos.z + vz * dt;
+      if (safe(this.pos.x, nz) && L.fits(this.pos.x, nz, r, this.pos.y, step, T.height)) {
+        this.pos.z = nz;
+        moved = true;
+      }
+    }
+    // Keep monsters from stacking inside each other.
+    for (const o of g.enemies) {
+      if (o === this || o.dead) continue;
+      const ox = this.pos.x - o.pos.x, oz = this.pos.z - o.pos.z, d = Math.hypot(ox, oz), min = r + o.def.radius;
+      if (d >= min || d < 1e-4 || Math.abs(o.pos.y - this.pos.y) > 2) continue;
+      const push = Math.min(.1, (min - d) * .5), px = this.pos.x + ox / d * push, pz = this.pos.z + oz / d * push;
+      if (L.fits(px, pz, r, this.pos.y, step, T.height)) {
+        this.pos.x = px;
+        this.pos.z = pz;
+      }
+    }
+    const span = L.span(this.pos.x, this.pos.z, r);
+    this.vy -= 20 * dt;
+    this.pos.y += this.vy * dt;
+    if (this.pos.y <= span.floor) {
+      this.pos.y = span.floor;
+      this.vy = 0;
+    }
+    this.model.root.position.copy(this.pos);
+    this.model.root.rotation.y = this.yaw;
+    return moved;
+  }
+
+  // ------------------------------------------------------------ attacks
+
+  startAttack(kind, g) {
+    this.state = 'attack';
+    this.kind = kind;
+    this.fired = false;
+    if (kind === 'melee') {
+      this.timer = this.type === 'boss' ? 1 : this.type === 'brute' ? .55 : .6;
+    } else {
+      this.timer = this.type === 'boss' ? 1.1 : .85;
+      if (this.type === 'boss' && Math.random() < .5) g.sound.play('bossRoar', this.pos, .7);
+    }
+    this.attackLen = this.timer;
+    this.fireAt = this.timer * .5;
+  }
+
+  strike(g, dist) {
+    const p = g.player, T = this.def;
+    g.sound.play(this.type === 'brute' ? 'bite' : this.type === 'boss' ? 'stomp' : 'claw', this.pos);
+    if (this.type === 'boss') {
+      g.shockwave(this.pos, 5);
+      if (dist < 5.5 && Math.abs(p.pos.y - this.pos.y) < 2) p.hurt(randInt(T.melee), this.pos, g);
+      return;
+    }
+    if (dist < T.reach + T.radius + p.radius + .4 && Math.abs(p.pos.y - this.pos.y) < 1.6) {
+      p.hurt(randInt(T.melee), this.pos, g);
+    }
+  }
+
+  shoot(g) {
+    const T = this.def, p = g.player;
+    const fx = Math.sin(this.yaw), fz = Math.cos(this.yaw);
+    const origin = new THREE.Vector3(
+      this.pos.x + fx * (T.radius + .35),
+      this.pos.y + T.height * (this.type === 'boss' ? .75 : .7),
+      this.pos.z + fz * (T.radius + .35),
+    );
+    const target = p.eye();
+    target.y -= .35;
+    const base = target.sub(origin).normalize();
+    const count = this.type === 'boss' ? (this.hp < T.hp / 2 ? 5 : 3) : 1;
+    const spread = .13;
+    for (let i = 0; i < count; i++) {
+      const a = (i - (count - 1) / 2) * spread;
+      const dir = base.clone().applyAxisAngle(THREE.Object3D.DEFAULT_UP, a);
+      g.spawnProjectile(origin, dir, this.type === 'boss' ? 15 : 13, randInt(T.missile), this, this.type === 'boss');
+    }
+    g.sound.play('fireball', origin);
+  }
+
+  damage(amount, g, dir) {
+    if (this.dead) return;
+    this.hp -= amount;
+    this.flash = .07;
+    if (this.state === 'idle') this.wake(g);
+    if (this.hp <= 0) {
+      this.die(g, dir, amount);
+      return;
+    }
+    if (Math.random() < this.def.pain * Math.min(1, amount / 14)) {
+      this.state = 'pain';
+      this.timer = .22;
+      g.sound.play('pain', this.pos, .8);
+    }
+  }
+
+  die(g, dir, amount) {
+    this.dead = true;
+    this.state = 'dead';
+    this.model.material.userData.uniforms.flash.value = 0;
+    g.sound.play('death', this.pos);
+    g.sound.play('gib', this.pos);
+    if (this.glow) g.lights.remove(this.glow);
+    const s = this.def.scale, h = this.def.height;
+    g.blood(this.pos.x, this.pos.y + h * .55, this.pos.z, this.type === 'boss' ? 160 : 45, 3 + s);
+    g.debris.explode(this.model.root, this.type === 'boss' ? 7 : 4 + Math.min(4, amount / 20), dir);
+    g.onEnemyDeath(this);
+  }
+
+  // ------------------------------------------------------------ animation
+
+  // Rotate a part relative to its sculpted rest pose.
+  pose(name, x = 0, y = 0, z = 0) {
+    const p = this.model.parts[name];
+    if (!p) return;
+    const r = this.model.rest[name] || ZERO;
+    p.rotation.set(r[0] + x, r[1] + y, r[2] + z);
+  }
+
+  // Veins and the boss's core throb; `extra` makes them flare during attacks.
+  pulse(extra = 0) {
+    this.model.material.userData.uniforms.glowStrength.value = this.glowBase * (1 + .25 * Math.sin(this.anim * 2.6 + this.seed) + extra);
+    this.model.parts.core?.scale.setScalar(1 + Math.sin(this.anim * 5) * .15 + extra * .5);
+  }
+
+  idleAnim() {
+    const b = Math.sin(this.anim * 2 + this.seed);
+    this.model.parts.body.position.y = this.bodyY;
+    this.pose('body', b * .03);
+    this.pose('head', b * -.03, Math.sin(this.anim * .5 + this.seed) * .45);
+    this.pose('jaw', Math.max(0, b) * .1);
+    this.pose('armL', b * .05);
+    this.pose('armR', -b * .05);
+    for (const n of ['foreL', 'foreR', 'thighL', 'thighR', 'shinL', 'shinR']) this.pose(n);
+    this.pulse();
+  }
+
+  walkAnim(dt, speed) {
+    const rate = this.type === 'boss' ? 1.1 : this.type === 'brute' ? 1.6 : 2.4;
+    this.walkPhase += dt * speed * rate;
+    this.swing = lerp(this.swing, speed > 0 ? 1 : 0, Math.min(1, dt * 8));
+    const w = this.swing, s = Math.sin(this.walkPhase), c = Math.cos(this.walkPhase), a = s * .6 * w;
+    this.pose('thighL', -a);
+    this.pose('thighR', a);
+    this.pose('shinL', Math.max(0, c) * .7 * w);
+    this.pose('shinR', Math.max(0, -c) * .7 * w);
+    this.pose('armL', a * .7);
+    this.pose('armR', -a * .7);
+    this.pose('foreL', -Math.max(0, s) * .3 * w);
+    this.pose('foreR', -Math.max(0, -s) * .3 * w);
+    this.pose('body', .08 * w, 0, s * .05 * w);
+    this.pose('head', -.06 * w);
+    this.pose('jaw', .1 + Math.sin(this.anim * 3) * .08);
+    this.model.parts.body.position.y = this.bodyY + Math.abs(c) * .05 * w;
+    this.pulse();
+  }
+
+  attackPose() {
+    const k = 1 - this.timer / this.attackLen;
+    const wind = Math.min(1, k * 2), strike = Math.max(0, k * 2 - 1);
+    this.pose('thighL', -.15 * wind);
+    this.pose('thighR', .1 * wind);
+    this.pose('shinL', .2 * wind);
+    this.pose('shinR', .1 * wind);
+    if (this.type === 'brute') {
+      this.pose('body', lerp(0, .35, wind) - strike * .25);
+      this.pose('head', -.25 * wind);
+      this.pose('jaw', strike > 0 ? lerp(.8, -.1, strike) : lerp(0, .8, wind));
+      this.pose('armL', -1.1 * wind + strike * .6);
+      this.pose('armR', -1.1 * wind + strike * .6);
+      this.pose('foreL', -.4 * wind);
+      this.pose('foreR', -.4 * wind);
+      this.pulse(wind * .5);
+      return;
+    }
+    if (this.type === 'imp' && this.kind === 'melee') {
+      const arm = lerp(0, -1.6, wind) + strike * 1.9;
+      this.pose('armL', arm, 0, .1);
+      this.pose('armR', arm, 0, -.1);
+      this.pose('foreL', -.3 * wind + strike * .6);
+      this.pose('foreR', -.3 * wind + strike * .6);
+      this.pose('body', -.1 * wind + strike * .35);
+      this.pose('jaw', .35 * wind);
+      this.pulse(wind * .6);
+      return;
+    }
+    if (this.type === 'boss') {
+      this.model.parts.body.position.y = this.bodyY + (this.kind === 'melee' ? wind * .35 - strike * .45 : 0);
+      const arm = lerp(0, -2.3, wind) + strike * 1.4;
+      this.pose('armL', arm, 0, .15);
+      this.pose('armR', arm, 0, -.15);
+      this.pose('foreL', -.4 * wind);
+      this.pose('foreR', -.4 * wind);
+      this.pose('body', -.15 * wind + strike * .25);
+      this.pose('head', .15 * wind - strike * .2);
+      this.pose('jaw', .5 * wind);
+      this.pulse(wind * 1.2 - strike * .8);
+      return;
+    }
+    // Imp throw: right arm winds back over the shoulder, then whips forward.
+    this.pose('armR', lerp(0, 2.4, wind) - strike * 3.4, 0, -.1);
+    this.pose('foreR', lerp(0, -1.2, wind) + strike * 1.1);
+    this.pose('armL', -.3 * wind, 0, .1);
+    this.pose('body', -.12 * wind + strike * .3, .2 * wind - strike * .4);
+    this.pose('jaw', .4 * wind);
+    this.pulse(wind * .8);
+  }
+
+  dispose(g) {
+    if (!this.dead) g.scene.remove(this.model.root);
+    if (this.glow) g.lights.remove(this.glow);
+  }
+}
+
+// ---------------------------------------------------------------- fireballs
+
+export class Projectile {
+  constructor(g, origin, dir, speed, damage, owner, big) {
+    this.pos = origin.clone();
+    this.vel = dir.clone().multiplyScalar(speed);
+    this.damage = damage;
+    this.owner = owner;
+    this.big = big;
+    this.radius = big ? .32 : .2;
+    this.life = 6;
+    this.group = new THREE.Group();
+    const core = new THREE.Mesh(g.fx.ballGeo, g.fx.ballMat);
+    core.scale.setScalar(this.radius);
+    const halo = new THREE.Sprite(g.fx.haloMat);
+    halo.scale.setScalar(this.radius * 7);
+    this.group.add(core, halo);
+    this.group.position.copy(this.pos);
+    g.scene.add(this.group);
+    this.light = g.lights.add({ pos: this.pos, color: 0xff6a20, intensity: big ? 30 : 16, range: big ? 8 : 6, dynamic: true });
+  }
+
+  update(dt, g) {
+    this.life -= dt;
+    this.pos.addScaledVector(this.vel, dt);
+    this.group.position.copy(this.pos);
+    for (let i = 0; i < (this.big ? 3 : 2); i++) {
+      g.fire.spawn(
+        this.pos.x + (Math.random() - .5) * this.radius, this.pos.y + (Math.random() - .5) * this.radius, this.pos.z + (Math.random() - .5) * this.radius,
+        (Math.random() - .5) * .6, Math.random() * .6, (Math.random() - .5) * .6,
+        .25 + Math.random() * .2, this.radius * 2.2, 0, 3, 1.1, .25, 1,
+      );
+    }
+
+    const p = g.player;
+    if (!p.dead) {
+      const d = Math.hypot(p.pos.x - this.pos.x, p.pos.z - this.pos.z);
+      if (d < p.radius + this.radius && this.pos.y > p.pos.y - this.radius && this.pos.y < p.pos.y + p.height + this.radius) {
+        p.hurt(this.damage, this.pos, g);
+        this.explode(g);
+        return false;
+      }
+    }
+    for (const e of g.enemies) {
+      if (e.dead || e === this.owner) continue;
+      const d = Math.hypot(e.pos.x - this.pos.x, e.pos.z - this.pos.z);
+      if (d < e.def.radius + this.radius && this.pos.y > e.pos.y && this.pos.y < e.pos.y + e.def.height) {
+        tmp.copy(this.vel).normalize();
+        e.damage(this.damage, g, tmp);
+        this.explode(g);
+        return false;
+      }
+    }
+    if (this.life <= 0 || !g.level.open(this.pos.x, this.pos.y, this.pos.z)) {
+      this.pos.addScaledVector(this.vel, -dt);
+      this.explode(g);
+      return false;
+    }
+    return true;
+  }
+
+  explode(g) {
+    this.dispose(g);
+    g.explosion(this.pos, this.big);
+  }
+
+  dispose(g) {
+    g.scene.remove(this.group);
+    g.lights.remove(this.light);
+  }
+}
+
+// Ray against an upright cylinder; returns the hit distance or Infinity.
+export function rayCylinder(o, d, cx, cz, r, y0, y1) {
+  const ox = o.x - cx, oz = o.z - cz;
+  const a = d.x * d.x + d.z * d.z;
+  if (a < 1e-8) return Infinity;
+  const b = 2 * (ox * d.x + oz * d.z), c = ox * ox + oz * oz - r * r;
+  const disc = b * b - 4 * a * c;
+  if (disc < 0) return Infinity;
+  const t = (-b - Math.sqrt(disc)) / (2 * a);
+  if (t < 0) return Infinity;
+  const y = o.y + d.y * t;
+  return y >= y0 && y <= y1 ? t : Infinity;
+}
