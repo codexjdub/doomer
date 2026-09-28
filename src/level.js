@@ -134,6 +134,15 @@ export class Level {
     return this.cell(Math.floor(px), Math.floor(pz));
   }
 
+  // Visit the four edges of cell (x, z) with the neighbour across each one.
+  // Endpoints run a→b so a wall built along them faces into this cell.
+  forEachEdge(x, z, fn) {
+    fn(this.cell(x - 1, z), x, z + 1, x, z);
+    fn(this.cell(x + 1, z), x + 1, z, x + 1, z + 1);
+    fn(this.cell(x, z - 1), x, z, x + 1, z);
+    fn(this.cell(x, z + 1), x + 1, z + 1, x, z + 1);
+  }
+
   blocked(c) {
     return c.solid || (c.door !== null && c.door !== undefined && c.door.pos < Math.min(2.1, c.door.height - .05));
   }
@@ -168,20 +177,14 @@ export class Level {
     for (const c of this.cells) {
       if (c.solid) continue;
       const { x, z } = c;
-      const edges = [
-        [this.cell(x - 1, z), x, z + 1, x, z],
-        [this.cell(x + 1, z), x + 1, z, x + 1, z + 1],
-        [this.cell(x, z - 1), x, z, x + 1, z],
-        [this.cell(x, z + 1), x + 1, z + 1, x, z + 1],
-      ];
-      for (const [n, ax, az, bx, bz] of edges) {
+      this.forEachEdge(x, z, (n, ax, az, bx, bz) => {
         if (n.solid) {
           wall(n.wall, ax, az, bx, bz, c.floor, c.ceil);
-          continue;
+          return;
         }
         if (n.floor > c.floor) wall(n.side, ax, az, bx, bz, c.floor, Math.min(n.floor, c.ceil));
         if (n.ceil < c.ceil) wall(n.side, ax, az, bx, bz, Math.max(n.ceil, c.floor), c.ceil);
-      }
+      });
       const fs = scaleOf(c.ftex);
       quad(c.ftex, [[x, c.floor, z], [x, c.floor, z + 1], [x + 1, c.floor, z + 1], [x + 1, c.floor, z]], [0, 1, 0],
         [[x / fs, z / fs], [x / fs, (z + 1) / fs], [(x + 1) / fs, (z + 1) / fs], [(x + 1) / fs, z / fs]]);

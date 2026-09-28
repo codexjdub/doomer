@@ -389,7 +389,7 @@ class Game {
     this.lights.update(this.camera, this.time, dt);
     this.weaponPass.enabled = this.state !== 'title';
     this.composer.render(dt);
-    this.automap.draw(this.time);
+    this.automap.draw();
   }
 
   // ------------------------------------------------------------ world

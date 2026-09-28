@@ -4,15 +4,20 @@ import { ITEMS } from './items.js';
 
 const WALL = '#e0582a';
 const STEP = 'rgba(255, 190, 120, .45)';
-const DOOR = { plain: '#40c0ff', red: '#ff3020', boss: '#ff3020' };
+const LAVA = 'rgba(255, 115, 20, .8)';
+const DOOR = { plain: '#40c0ff', red: '#ff3020', boss: '#c060ff' };
+const EXIT = '#40ffb0';
 const LEGEND = [
   ['You', '#fff2c0'],
   ['Wall', WALL],
   ['Door', DOOR.plain],
   ['Red door', DOOR.red],
-  ['Lava', '#ff7a1a'],
-  ['Exit', '#40ffb0'],
+  ['Sealed door', DOOR.boss],
+  ['Lava', LAVA],
+  ['Exit', EXIT],
 ];
+const LAYER_RES = 12; // pixels per metre in the cached minimap layer
+const MINI_SCALE = 6.5; // CSS pixels per metre on the minimap
 
 const hex = (n) => `#${n.toString(16).padStart(6, '0')}`;
 
@@ -21,19 +26,37 @@ export class Automap {
     this.game = game;
     const L = game.level;
     this.seen = new Uint8Array(L.w * L.h);
+    // Floor colour per cell, worked out once: lava, open sky, or shaded by height.
+    this.style = L.cells.map((c) => {
+      if (c.lava) return LAVA;
+      const k = Math.max(0, Math.min(1, c.floor / 2.4)), b = c.sky ? [58, 26, 20] : [40, 30, 26];
+      return `rgba(${b[0] + 50 * k | 0}, ${b[1] + 40 * k | 0}, ${b[2] + 30 * k | 0}, .9)`;
+    });
+    // Explored cells are painted into this canvas only when they change; the
+    // minimap just draws it rotated each frame.
+    this.layer = document.createElement('canvas');
+    this.layer.width = L.w * LAYER_RES;
+    this.layer.height = L.h * LAYER_RES;
+    this.hud = document.getElementById('hud');
     this.mini = document.createElement('canvas');
     this.mini.id = 'minimap';
     this.full = document.createElement('canvas');
     this.full.id = 'automap';
     this.full.hidden = true;
-    document.getElementById('hud').append(this.mini, this.full);
+    this.hud.append(this.mini, this.full);
     this.open = false;
+    this.fullShown = false;
     this.showMini = true;
+    this.miniCss = 0;
     this.timer = 0;
+    this.dirty = true;
+    this.doorKey = '';
+    addEventListener('resize', () => { this.miniCss = 0; });
   }
 
   reset() {
     this.seen.fill(0);
+    this.dirty = true;
     this.timer = 0;
     this.open = false;
   }
@@ -41,21 +64,28 @@ export class Automap {
   setMini(on) {
     this.showMini = on;
     this.mini.hidden = !on;
+    this.miniCss = 0;
   }
 
   mark(x, z) {
     const L = this.game.level;
-    if (x >= 0 && z >= 0 && x < L.w && z < L.h) this.seen[z * L.w + x] = 1;
+    if (x < 0 || z < 0 || x >= L.w || z >= L.h) return;
+    const i = z * L.w + x;
+    if (!this.seen[i]) {
+      this.seen[i] = 1;
+      this.dirty = true;
+    }
   }
 
-  // Cast rays around the player through the grid; everything they reach
-  // (and the wall that stops them) counts as seen.
+  // Cast rays around the player through the grid. A ray stops at walls, closed
+  // doors, and floors or ceilings that block the view at eye height, so raised
+  // platforms hide what's on top of them until you climb up.
   update(dt) {
     this.timer -= dt;
     if (this.timer > 0) return;
     this.timer = .12;
-    const L = this.game.level, p = this.game.player.pos;
-    const px = p.x, pz = p.z;
+    const L = this.game.level, p = this.game.player;
+    const px = p.pos.x, pz = p.pos.z, eye = p.pos.y + p.eyeHeight;
     for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) this.mark(Math.floor(px) + dx, Math.floor(pz) + dz);
     for (let i = 0; i < 240; i++) {
       const a = i / 240 * Math.PI * 2, rx = Math.cos(a), rz = Math.sin(a);
@@ -65,7 +95,8 @@ export class Automap {
       let tx = (rx < 0 ? px - x : x + 1 - px) * ddx, tz = (rz < 0 ? pz - z : z + 1 - pz) * ddz;
       for (let n = 0; n < 80; n++) {
         this.mark(x, z);
-        if (L.blocked(L.cell(x, z))) break;
+        const c = L.cell(x, z);
+        if (L.blocked(c) || c.floor > eye - .1 || c.ceil < eye) break;
         if (tx < tz) {
           if (tx > 40) break;
           tx += ddx;
@@ -79,18 +110,22 @@ export class Automap {
     }
   }
 
-  draw(t) {
-    const hudVisible = !document.getElementById('hud').hidden;
-    this.full.hidden = !(this.open && hudVisible);
-    this.mini.style.visibility = this.open ? 'hidden' : '';
+  draw() {
+    const hudVisible = !this.hud.hidden, fullShown = this.open && hudVisible;
+    if (fullShown !== this.fullShown) {
+      this.fullShown = fullShown;
+      this.full.hidden = !fullShown;
+      this.mini.style.visibility = fullShown ? 'hidden' : '';
+    }
     if (!hudVisible) return;
-    if (this.open) this.drawFull(t);
-    else if (this.showMini) this.drawMini(t);
+    if (fullShown) this.drawFull();
+    else if (this.showMini) this.drawMini();
   }
 
-  fit(canvas) {
+  // Match a canvas's backing store to its CSS size; returns the pixel ratio.
+  size(canvas, cssW, cssH) {
     const r = Math.min(devicePixelRatio || 1, 2);
-    const w = Math.round(canvas.clientWidth * r), h = Math.round(canvas.clientHeight * r);
+    const w = Math.max(1, Math.round(cssW * r)), h = Math.max(1, Math.round(cssH * r));
     if (canvas.width !== w || canvas.height !== h) {
       canvas.width = w;
       canvas.height = h;
@@ -98,9 +133,24 @@ export class Automap {
     return r;
   }
 
-  drawMini(t) {
-    const c = this.mini, ctx = c.getContext('2d'), r = this.fit(c);
-    const W = c.width, H = c.height, p = this.game.player, s = 6.5 * r;
+  refreshLayer() {
+    const doors = this.game.level.doors.map((d) => (d.pos < d.height - .2 ? 1 : 0)).join('');
+    if (!this.dirty && doors === this.doorKey) return;
+    this.dirty = false;
+    this.doorKey = doors;
+    const ctx = this.layer.getContext('2d');
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, this.layer.width, this.layer.height);
+    ctx.setTransform(LAYER_RES, 0, 0, LAYER_RES, 0, 0);
+    this.drawCells(ctx, LAYER_RES);
+  }
+
+  drawMini() {
+    // Measured once per resize; reading layout every frame forces a reflow.
+    if (!this.miniCss) this.miniCss = this.mini.clientWidth;
+    const c = this.mini, ctx = c.getContext('2d'), r = this.size(c, this.miniCss, this.miniCss);
+    const W = c.width, H = c.height, p = this.game.player, L = this.game.level, s = MINI_SCALE * r;
+    this.refreshLayer();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, W, H);
     ctx.save();
@@ -111,25 +161,27 @@ export class Automap {
     ctx.rotate(p.yaw);
     ctx.scale(s, s);
     ctx.translate(-p.pos.x, -p.pos.z);
-    const reach = W / s * .75;
-    this.drawWorld(ctx, p.pos.x - reach, p.pos.z - reach, p.pos.x + reach, p.pos.z + reach, s, t);
+    ctx.drawImage(this.layer, 0, 0, L.w, L.h);
+    const reach = W / s;
+    this.drawMarkers(ctx, p.pos.x - reach, p.pos.z - reach, p.pos.x + reach, p.pos.z + reach, s);
     ctx.restore();
     // The player arrow always points up on the minimap.
     ctx.setTransform(1, 0, 0, 1, W / 2, H / 2);
     this.arrow(ctx, 0, 7 * r);
   }
 
-  drawFull(t) {
-    const c = this.full, ctx = c.getContext('2d'), r = this.fit(c);
+  drawFull() {
+    const c = this.full, ctx = c.getContext('2d'), r = this.size(c, innerWidth, innerHeight);
     const W = c.width, H = c.height, L = this.game.level, p = this.game.player;
-    const s = Math.min((W - 80 * r) / L.w, (H - 140 * r) / L.h);
+    const s = Math.max(.5 * r, Math.min((W - 80 * r) / L.w, (H - 140 * r) / L.h));
     const ox = (W - L.w * s) / 2, oz = (H - L.h * s) / 2 - 16 * r;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, W, H);
     ctx.save();
     ctx.translate(ox, oz);
     ctx.scale(s, s);
-    this.drawWorld(ctx, 0, 0, L.w, L.h, s, t);
+    this.drawCells(ctx, s);
+    this.drawMarkers(ctx, 0, 0, L.w, L.h, s);
     ctx.restore();
     ctx.setTransform(1, 0, 0, 1, ox + p.pos.x * s, oz + p.pos.z * s);
     this.arrow(ctx, p.yaw, Math.max(8 * r, s * .8));
@@ -142,11 +194,9 @@ export class Automap {
     ctx.fillText('MAP', 24 * r, 20 * r);
     ctx.font = `600 ${13 * r}px Inter, system-ui, sans-serif`;
     ctx.textBaseline = 'middle';
-    let x = 0;
-    const y = H - 30 * r, gap = 26 * r;
+    const y = H - 30 * r, gap = 22 * r;
     const widths = LEGEND.map(([label]) => 16 * r + ctx.measureText(label).width);
-    const total = widths.reduce((a, b) => a + b, 0) + gap * (LEGEND.length - 1);
-    x = (W - total) / 2;
+    let x = (W - widths.reduce((a, b) => a + b, 0) - gap * (LEGEND.length - 1)) / 2;
     LEGEND.forEach(([label, color], i) => {
       ctx.fillStyle = color;
       ctx.fillRect(x, y - 5 * r, 10 * r, 10 * r);
@@ -156,51 +206,40 @@ export class Automap {
     });
   }
 
-  // Draw the explored cells inside the given world rectangle. The context is
-  // already transformed so one unit is one metre.
-  drawWorld(ctx, x0, z0, x1, z1, s, t) {
-    const g = this.game, L = g.level, seen = this.seen;
-    const cx0 = Math.max(0, Math.floor(x0)), cz0 = Math.max(0, Math.floor(z0));
-    const cx1 = Math.min(L.w - 1, Math.ceil(x1)), cz1 = Math.min(L.h - 1, Math.ceil(z1));
-    const lavaGlow = .75 + .25 * Math.sin(t * 3);
-
-    for (let z = cz0; z <= cz1; z++) {
-      for (let x = cx0; x <= cx1; x++) {
-        if (!seen[z * L.w + x]) continue;
-        const c = L.cell(x, z);
-        if (c.solid) continue;
-        if (c.lava) {
-          ctx.fillStyle = `rgba(255, ${Math.round(90 + 40 * lavaGlow)}, 20, ${.55 + .3 * lavaGlow})`;
-        } else {
-          const k = Math.max(0, Math.min(1, c.floor / 2.4));
-          const base = c.sky ? [58, 26, 20] : [40, 30, 26];
-          ctx.fillStyle = `rgba(${base[0] + 50 * k | 0}, ${base[1] + 40 * k | 0}, ${base[2] + 30 * k | 0}, .9)`;
-        }
-        ctx.fillRect(x - .01, z - .01, 1.02, 1.02);
-      }
-    }
-
-    // Walls and height steps as lines along cell edges.
-    const walls = new Path2D(), steps = new Path2D();
+  // Paint every explored cell: floors batched by colour, then height steps,
+  // walls and closed doors. The context is scaled so one unit is one metre.
+  drawCells(ctx, s) {
+    const L = this.game.level, seen = this.seen, w = L.w;
+    const floors = new Map(), walls = new Path2D(), steps = new Path2D();
     const doors = { plain: new Path2D(), red: new Path2D(), boss: new Path2D() };
-    for (let z = cz0; z <= cz1; z++) {
-      for (let x = cx0; x <= cx1; x++) {
-        if (!seen[z * L.w + x]) continue;
-        const c = L.cell(x, z);
-        if (c.solid) continue;
-        if (c.door && c.door.pos < c.door.height - .2) doors[c.door.type].rect(x + .1, z + .1, .8, .8);
-        const edges = [[L.cell(x - 1, z), x, z, x, z + 1], [L.cell(x + 1, z), x + 1, z, x + 1, z + 1],
-          [L.cell(x, z - 1), x, z, x + 1, z], [L.cell(x, z + 1), x, z + 1, x + 1, z + 1]];
-        for (const [n, ax, az, bx, bz] of edges) {
-          if (n.solid) {
-            walls.moveTo(ax, az);
-            walls.lineTo(bx, bz);
-          } else if (Math.abs(n.floor - c.floor) > .05 && (n.x > x || n.z > z)) {
-            steps.moveTo(ax, az);
-            steps.lineTo(bx, bz);
-          }
-        }
+    let c = null, i = 0;
+    const edge = (n, ax, az, bx, bz) => {
+      if (n.solid) {
+        walls.moveTo(ax, az);
+        walls.lineTo(bx, bz);
+        return;
       }
+      if (Math.abs(n.floor - c.floor) <= .05) return;
+      // Draw each shared edge once: the neighbour draws it if it comes
+      // first and has been seen, otherwise this cell does.
+      const j = n.z * w + n.x;
+      if (j < i && seen[j]) return;
+      steps.moveTo(ax, az);
+      steps.lineTo(bx, bz);
+    };
+    for (i = 0; i < seen.length; i++) {
+      if (!seen[i]) continue;
+      c = L.cells[i];
+      if (c.solid) continue;
+      let floor = floors.get(this.style[i]);
+      if (!floor) floors.set(this.style[i], (floor = new Path2D()));
+      floor.rect(c.x - .01, c.z - .01, 1.02, 1.02);
+      if (c.door && c.door.pos < c.door.height - .2) doors[c.door.type].rect(c.x + .1, c.z + .1, .8, .8);
+      L.forEachEdge(c.x, c.z, edge);
+    }
+    for (const [style, path] of floors) {
+      ctx.fillStyle = style;
+      ctx.fill(path);
     }
     ctx.lineCap = 'round';
     ctx.lineWidth = 1.2 / s;
@@ -213,11 +252,14 @@ export class Automap {
       ctx.fillStyle = DOOR[type];
       ctx.fill(path);
     }
+  }
 
-    // Pickups and the exit, once their cells have been seen.
+  // Pickups and the exit inside the given world rectangle, once seen.
+  drawMarkers(ctx, x0, z0, x1, z1, s) {
+    const g = this.game, L = g.level, seen = this.seen;
     for (const it of g.items) {
-      const cx = Math.floor(it.pos.x), cz = Math.floor(it.pos.z);
-      if (!seen[cz * L.w + cx] || it.pos.x < x0 - 1 || it.pos.x > x1 + 1 || it.pos.z < z0 - 1 || it.pos.z > z1 + 1) continue;
+      if (it.pos.x < x0 || it.pos.x > x1 || it.pos.z < z0 || it.pos.z > z1) continue;
+      if (!seen[Math.floor(it.pos.z) * L.w + Math.floor(it.pos.x)]) continue;
       ctx.fillStyle = hex(ITEMS[it.type].glow);
       ctx.beginPath();
       ctx.arc(it.pos.x, it.pos.z, it.type === 'K' ? .45 : .28, 0, Math.PI * 2);
@@ -225,7 +267,7 @@ export class Automap {
     }
     const ex = g.exitPad;
     if (ex && seen[Math.floor(ex.pos.z) * L.w + Math.floor(ex.pos.x)]) {
-      ctx.strokeStyle = '#40ffb0';
+      ctx.strokeStyle = EXIT;
       ctx.lineWidth = 2.5 / s;
       ctx.beginPath();
       ctx.arc(ex.pos.x, ex.pos.z, .9, 0, Math.PI * 2);

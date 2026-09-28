@@ -76,7 +76,8 @@ html, body {
   top: 22px;
   left: 50%;
   transform: translateX(-50%);
-  width: min(520px, 60vw);
+  /* Stay clear of the minimap in the top-right corner. */
+  width: min(520px, 60vw, calc(100vw - 420px));
   text-align: center;
 }
 .boss-name {
@@ -350,4 +351,5 @@ kbd {
   .hud-left { gap: 18px; left: 16px; }
   .hud-right { right: 16px; }
   #minimap { width: 120px; height: 120px; top: 12px; right: 12px; }
+  #boss { width: calc(100vw - 300px); }
 }
