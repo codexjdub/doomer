@@ -58,13 +58,18 @@ export class Hud {
         </select>
       </label>
       <label>Mouse sensitivity <input type="range" min="0.2" max="3" step="0.05" data-set="sensitivity"></label>
-      <label>Volume <input type="range" min="0" max="1" step="0.05" data-set="volume"></label>`;
+      <label>Volume <input type="range" min="0" max="1" step="0.05" data-set="volume"></label>
+      <label>Minimap <input type="checkbox" data-set="minimap"></label>`;
     container.querySelectorAll('[data-set]').forEach((input) => {
-      input.value = this.game.settings[input.dataset.set];
-      input.addEventListener(input.tagName === 'SELECT' ? 'change' : 'input', () => {
-        const v = input.tagName === 'SELECT' ? input.value : parseFloat(input.value);
-        this.game.setSetting(input.dataset.set, v);
-        document.querySelectorAll(`[data-set="${input.dataset.set}"]`).forEach((o) => { if (o !== input) o.value = v; });
+      const key = input.dataset.set, box = input.type === 'checkbox';
+      if (box) input.checked = !!this.game.settings[key]; else input.value = this.game.settings[key];
+      input.addEventListener(input.tagName === 'SELECT' || box ? 'change' : 'input', () => {
+        const v = box ? input.checked : input.tagName === 'SELECT' ? input.value : parseFloat(input.value);
+        this.game.setSetting(key, v);
+        document.querySelectorAll(`[data-set="${key}"]`).forEach((o) => {
+          if (o === input) return;
+          if (box) o.checked = v; else o.value = v;
+        });
       });
     });
   }

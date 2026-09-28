@@ -21,6 +21,7 @@ Then open <http://localhost:8000>.
 | Left click | Shoot |
 | Space | Jump |
 | 1 2 3 / mouse wheel / Q | Switch weapon |
+| Tab (hold) | Map |
 | Esc | Pause |
 
 ## Code map
@@ -39,6 +40,7 @@ Then open <http://localhost:8000>.
 | `src/items.js` | Pickups, lamps, torches and the exit pad |
 | `src/effects.js` | Particles, decals, gibs and the dynamic light pool |
 | `src/audio.js` | Synthesized sound effects and ambience |
+| `src/automap.js` | Explored-area tracking, corner minimap and full-screen map |
 | `src/hud.js`, `src/input.js` | HUD, menus, settings, keyboard and mouse |
 
 ## Editing the level

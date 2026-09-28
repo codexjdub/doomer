@@ -17,6 +17,7 @@ import { Item, ITEMS, MAX, addLamp, Torch, ExitPad } from './items.js';
 import { Player } from './player.js';
 import { Hud } from './hud.js';
 import { Input } from './input.js';
+import { Automap } from './automap.js';
 
 const QUALITY = {
   low: { pixelRatio: .75, shadows: 0, bloom: false, smaa: false },
@@ -25,7 +26,7 @@ const QUALITY = {
 };
 
 const SETTINGS_KEY = 'doomer.settings';
-const DEFAULTS = { quality: 'high', sensitivity: 1, volume: .7 };
+const DEFAULTS = { quality: 'high', sensitivity: 1, volume: .7, minimap: true };
 
 function loadSettings() {
   try {
@@ -92,6 +93,8 @@ class Game {
     this.arsenal.setEnvironment(this.envMap);
     this.hud = new Hud(this);
     this.input = new Input(this);
+    this.automap = new Automap(this);
+    this.automap.setMini(this.settings.minimap);
 
     this.props = [];
     this.lavaCells = this.level.cells.filter((c) => c.lava);
@@ -147,6 +150,7 @@ class Game {
     }
     if (key === 'quality') this.applyQuality(value);
     if (key === 'volume') this.sound.setVolume(value);
+    if (key === 'minimap') this.automap.setMini(value);
   }
 
   applyQuality(name) {
@@ -220,6 +224,7 @@ class Game {
     this.lockedMsgT = 0;
     this.deathT = 0;
     this.level.updateFlow(spawn.x, spawn.z);
+    this.automap.reset();
     this.hud.reset();
   }
 
@@ -309,6 +314,7 @@ class Game {
     this.projectiles = this.projectiles.filter((pr) => pr.update(dt, this));
     for (const it of this.items) it.update(dt);
     this.checkPickups();
+    this.automap.update(dt);
     this.arsenal.update(dt, this.input, look);
     this.input.endFrame();
     this.updateEffects(dt);
@@ -383,6 +389,7 @@ class Game {
     this.lights.update(this.camera, this.time, dt);
     this.weaponPass.enabled = this.state !== 'title';
     this.composer.render(dt);
+    this.automap.draw(this.time);
   }
 
   // ------------------------------------------------------------ world

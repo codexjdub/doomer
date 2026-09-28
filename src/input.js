@@ -23,11 +23,15 @@ export class Input {
       if (e.repeat) return;
       this.keys.add(e.code);
       if (e.code === 'Space') this.jumpPressed = true;
+      if (e.code === 'Tab') game.automap.open = true;
       const slot = ['Digit1', 'Digit2', 'Digit3'].indexOf(e.code);
       if (slot >= 0) game.arsenal.select(slot);
       if (e.code === 'KeyQ') game.arsenal.cycle(-1);
     });
-    addEventListener('keyup', (e) => this.keys.delete(e.code));
+    addEventListener('keyup', (e) => {
+      this.keys.delete(e.code);
+      if (e.code === 'Tab') game.automap.open = false;
+    });
     addEventListener('blur', () => this.clear());
 
     addEventListener('mousedown', (e) => {
@@ -89,5 +93,6 @@ export class Input {
     this.fire = false;
     this.jumpPressed = false;
     this.mx = this.my = 0;
+    if (this.game.automap) this.game.automap.open = false;
   }
 }
