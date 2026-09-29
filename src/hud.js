@@ -59,6 +59,7 @@ export class Hud {
       </label>
       <label>Mouse sensitivity <input type="range" min="0.2" max="3" step="0.05" data-set="sensitivity"></label>
       <label>Volume <input type="range" min="0" max="1" step="0.05" data-set="volume"></label>
+      <label>Music <input type="range" min="0" max="1" step="0.05" data-set="music"></label>
       <label>Minimap <input type="checkbox" data-set="minimap"></label>`;
     container.querySelectorAll('[data-set]').forEach((input) => {
       const key = input.dataset.set, box = input.type === 'checkbox';

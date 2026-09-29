@@ -10,6 +10,7 @@ import { createMaterials, createSky } from './textures.js';
 import { Level } from './level.js';
 import { Particles, Decals, Debris, LightPool } from './effects.js';
 import { Sound } from './audio.js';
+import { Music } from './music.js';
 import { Enemy, Projectile, rayCylinder } from './enemies.js';
 import { prebake } from './monsters.js';
 import { Arsenal } from './weapons.js';
@@ -26,7 +27,7 @@ const QUALITY = {
 };
 
 const SETTINGS_KEY = 'doomer.settings';
-const DEFAULTS = { quality: 'high', sensitivity: 1, volume: .7, minimap: true };
+const DEFAULTS = { quality: 'high', sensitivity: 1, volume: .7, music: .5, minimap: true };
 
 function loadSettings() {
   try {
@@ -88,6 +89,8 @@ class Game {
 
     this.sound = new Sound();
     this.sound.setVolume(this.settings.volume);
+    this.music = new Music(this.sound);
+    this.music.setVolume(this.settings.music);
     this.player = new Player();
     this.arsenal = new Arsenal(this);
     this.arsenal.setEnvironment(this.envMap);
@@ -150,6 +153,7 @@ class Game {
     }
     if (key === 'quality') this.applyQuality(value);
     if (key === 'volume') this.sound.setVolume(value);
+    if (key === 'music') this.music.setVolume(value);
     if (key === 'minimap') this.automap.setMini(value);
   }
 
@@ -223,6 +227,8 @@ class Game {
     this.flowTimer = 0;
     this.lockedMsgT = 0;
     this.deathT = 0;
+    this.combatHold = 0;
+    this.music.setMode('explore');
     this.level.updateFlow(spawn.x, spawn.z);
     this.automap.reset();
     this.hud.reset();
@@ -240,6 +246,7 @@ class Game {
   start() {
     this.sound.init();
     this.sound.resume();
+    this.music.start();
     this.state = 'playing';
     this.hud.showScreen(null);
     this.input.lock();
@@ -273,6 +280,7 @@ class Game {
 
   win() {
     this.state = 'won';
+    this.music.setMode('explore');
     this.sound.play('exit');
     this.input.unlock();
     this.hud.showScreen('win', this.statsText());
@@ -314,6 +322,7 @@ class Game {
     this.projectiles = this.projectiles.filter((pr) => pr.update(dt, this));
     for (const it of this.items) it.update(dt);
     this.checkPickups();
+    this.updateMusic(dt);
     this.automap.update(dt);
     this.arsenal.update(dt, this.input, look);
     this.input.endFrame();
@@ -390,6 +399,21 @@ class Game {
     this.weaponPass.enabled = this.state !== 'title';
     this.composer.render(dt);
     this.automap.draw();
+  }
+
+  // Explore music by default; combat while awake monsters are near (held for a
+  // few seconds after the last one); the boss theme once the Warlord is up.
+  updateMusic(dt) {
+    const p = this.player;
+    let hunting = false, boss = false;
+    for (const e of this.enemies) {
+      if (e.dead || e.state === 'idle') continue;
+      const d = Math.hypot(e.pos.x - p.pos.x, e.pos.z - p.pos.z);
+      if (e === this.boss) boss = boss || d < 32;
+      else if (d < 28) hunting = true;
+    }
+    this.combatHold = hunting ? 5 : Math.max(0, this.combatHold - dt);
+    this.music.setMode(p.dead ? 'explore' : boss ? 'boss' : this.combatHold > 0 ? 'combat' : 'explore');
   }
 
   // ------------------------------------------------------------ world

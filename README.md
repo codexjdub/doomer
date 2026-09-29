@@ -40,6 +40,7 @@ Then open <http://localhost:8000>.
 | `src/items.js` | Pickups, lamps, torches and the exit pad |
 | `src/effects.js` | Particles, decals, gibs and the dynamic light pool |
 | `src/audio.js` | Synthesized sound effects and ambience |
+| `src/music.js` | Adaptive soundtrack: explore, combat and boss layers synthesized live |
 | `src/automap.js` | Explored-area tracking, corner minimap and full-screen map |
 | `src/hud.js`, `src/input.js` | HUD, menus, settings, keyboard and mouse |
 
