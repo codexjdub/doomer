@@ -27,6 +27,13 @@ const QUALITY = {
   high: { pixelRatio: 1.5, shadows: 2, bloom: true, smaa: true },
 };
 
+// Menus stay light: the title flythrough draws at 30 fps without bloom or SMAA,
+// the pause, death and win screens hold their last frame, and nothing draws
+// once the window loses focus or sits a minute without input.
+const MENU_FPS = 30;
+const IDLE_MS = 60000;
+const FROZEN = new Set(['paused', 'dead', 'won']);
+
 const SETTINGS_KEY = 'doomer.settings';
 const PROGRESS_KEY = 'doomer.progress';
 const DEFAULTS = { quality: 'high', sensitivity: 1, volume: .7, music: .5, minimap: true };
@@ -117,6 +124,7 @@ class Game {
     this.progress = loadProgress();
 
     this.state = 'title';
+    this.running = false;
     this.enemies = [];
     this.items = [];
     this.projectiles = [];
@@ -126,15 +134,20 @@ class Game {
     this.emberAcc = 0;
     this.loadLevel(0);
     this.applyQuality(this.settings.quality);
-    addEventListener('resize', () => this.resize());
+    addEventListener('resize', () => {
+      this.resize();
+      this.wake(true);
+    });
     document.addEventListener('visibilitychange', () => {
       if (document.hidden && this.state === 'playing') this.pause();
+      if (!document.hidden) this.wake();
     });
+    for (const type of ['mousemove', 'mousedown', 'keydown', 'wheel', 'focus']) addEventListener(type, () => this.wake(), { passive: true });
+    addEventListener('blur', () => { this.lastInput = -Infinity; });
 
     // Compile shaders up front so the first frames don't hitch.
     this.renderer.compile(this.scene, this.camera);
-    this.last = performance.now();
-    requestAnimationFrame(this.frame);
+    this.wake();
     this.hud.showScreen('title');
     this.hud.ready();
     this.hud.buildLevels(LEVELS, this.progress.unlocked);
@@ -216,6 +229,7 @@ class Game {
     if (key === 'volume') this.sound.setVolume(value);
     if (key === 'music') this.music.setVolume(value);
     if (key === 'minimap') this.automap.setMini(value);
+    if (key === 'quality' || key === 'minimap') this.wake(true);
   }
 
   applyQuality(name) {
@@ -236,9 +250,11 @@ class Game {
     this.weaponPass.clear = false;
     this.weaponPass.clearDepth = true;
     c.addPass(this.weaponPass);
-    if (Q.bloom) c.addPass(new UnrealBloomPass(new THREE.Vector2(w, h), .6, .5, .9));
+    this.bloomPass = Q.bloom ? new UnrealBloomPass(new THREE.Vector2(w, h), .6, .5, .9) : null;
+    if (this.bloomPass) c.addPass(this.bloomPass);
     c.addPass(new OutputPass());
-    if (Q.smaa) c.addPass(new SMAAPass(w * this.pixelRatio, h * this.pixelRatio));
+    this.smaaPass = Q.smaa ? new SMAAPass(w * this.pixelRatio, h * this.pixelRatio) : null;
+    if (this.smaaPass) c.addPass(this.smaaPass);
     this.composer = c;
     this.resize();
   }
@@ -332,6 +348,7 @@ class Game {
     this.state = 'playing';
     this.hud.showScreen(null);
     this.input.lock();
+    this.wake();
     if (this.stats.time === 0) {
       this.hud.message(`Level ${this.levelIndex + 1}: ${this.def.name}`);
       this.hud.message(this.def.hint);
@@ -350,6 +367,7 @@ class Game {
     this.state = 'playing';
     this.hud.showScreen(null);
     this.input.lock();
+    this.wake();
   }
 
   onLockChange(locked) {
@@ -383,12 +401,26 @@ class Game {
 
   // ------------------------------------------------------------ main loop
 
-  frame = (now) => {
+  // Restart the loop after a menu stopped it. Input only restarts the title
+  // flythrough; the frozen screens redraw one frame when `redraw` is set.
+  wake(redraw = false) {
+    this.lastInput = performance.now();
+    if (this.running || (!redraw && FROZEN.has(this.state))) return;
+    this.running = true;
+    this.last = performance.now();
     requestAnimationFrame(this.frame);
+  }
+
+  frame = (now) => {
+    const menu = this.state !== 'playing' && this.state !== 'dying';
+    const hold = FROZEN.has(this.state) || (menu && now - this.lastInput > IDLE_MS);
+    if (hold) this.running = false;
+    else requestAnimationFrame(this.frame);
+    if (menu && !hold && now - this.last < 1000 / MENU_FPS - 2) return;
     const dt = Math.min(.05, Math.max(0, (now - this.last) / 1000));
     this.last = now;
     this.time += dt;
-    if (this.state === 'playing' || this.state === 'dying') this.update(dt);
+    if (!menu) this.update(dt);
     else if (this.state === 'title') this.attract(dt);
     else this.input.consumeLook();
     this.render(dt);
@@ -490,7 +522,10 @@ class Game {
     L.z = this.camera.position.z;
     L.yaw = this.camera.rotation.y;
     this.lights.update(this.camera, this.time, dt);
-    this.weaponPass.enabled = this.state !== 'title';
+    const full = this.state !== 'title';
+    this.weaponPass.enabled = full;
+    if (this.bloomPass) this.bloomPass.enabled = full;
+    if (this.smaaPass) this.smaaPass.enabled = full;
     this.composer.render(dt);
     this.automap.draw();
   }
