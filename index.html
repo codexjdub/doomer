@@ -45,8 +45,9 @@
   <div id="screen-title" class="screen">
     <div class="panel">
       <h1>Doomer</h1>
-      <p class="tag">Hell broke into the base. Grab a gun, find the red keycard, and put down the Warlord.</p>
+      <p class="tag">Hell broke into the base. Fight through five levels, from the hangar to the Warlord's throne.</p>
       <button class="primary" data-action="play" disabled>Loading…</button>
+      <div class="levels"></div>
       <div class="controls">
         <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Move</div>
         <div><kbd>Mouse</kbd> Look</div>
@@ -79,9 +80,12 @@
 
   <div id="screen-win" class="screen win" hidden>
     <div class="panel">
-      <h2>Level complete</h2>
+      <h2 data-win-title>Level complete</h2>
+      <p class="level-name" data-win-level></p>
       <p class="stats" data-stats></p>
-      <button class="primary" data-action="restart">Play again</button>
+      <button class="primary" data-action="next" data-next>Next level</button>
+      <button class="primary" data-action="newgame" data-newgame hidden>Play again from level 1</button>
+      <button data-action="restart">Replay level</button>
     </div>
   </div>
 

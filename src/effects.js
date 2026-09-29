@@ -278,8 +278,9 @@ export class LightPool {
     if (i >= 0) this.sources.splice(i, 1);
   }
 
-  clearDynamic() {
-    this.sources = this.sources.filter((s) => !s.dynamic);
+  // Forget every light source (used when a level unloads).
+  clear() {
+    this.sources.length = 0;
   }
 
   setShadows(enabled, count) {

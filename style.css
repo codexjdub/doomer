@@ -141,9 +141,12 @@ html, body {
   width: 16px;
   height: 24px;
   border-radius: 3px;
-  background: #ff3a2a;
-  box-shadow: 0 0 12px #ff3a2a;
+  --key: #ff3a2a;
+  background: var(--key);
+  box-shadow: 0 0 12px var(--key);
 }
+.key.blue { --key: #3a7aff; }
+.key.yellow { --key: #ffc830; }
 
 .hud-right {
   position: absolute;
@@ -279,6 +282,34 @@ button.primary {
 }
 button.primary:hover { background: #ee5020; }
 button:disabled { opacity: .6; cursor: default; }
+
+.levels {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  margin: 18px 0 0;
+}
+button.level {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  padding: 9px 12px;
+  font-size: 14px;
+  text-align: left;
+}
+button.level .num {
+  font: 700 18px Oswald, Impact, sans-serif;
+  color: var(--orange);
+}
+button.level:disabled .num { color: var(--muted); }
+.level-name {
+  font: 500 22px Oswald, Impact, sans-serif;
+  letter-spacing: 1px;
+  color: var(--text);
+  margin: -4px 0 10px;
+}
 
 .controls {
   display: grid;

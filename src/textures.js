@@ -374,6 +374,159 @@ function paintLava() {
   });
 }
 
+function paintPipes() {
+  return makeCanvas(256, (x, s) => {
+    x.fillStyle = '#141618';
+    x.fillRect(0, 0, s, s);
+    for (let i = 0; i < 4; i++) {
+      x.fillStyle = `hsl(210,5%,${10 + rand() * 4}%)`;
+      x.fillRect(i * 64 + 1, 0, 62, s);
+    }
+    for (const [px, w] of [[8, 22], [40, 14], [64, 30], [110, 18], [140, 26], [182, 12], [204, 34], [244, 10]]) {
+      const rusty = rand() < .5;
+      const g = x.createLinearGradient(px, 0, px + w, 0);
+      g.addColorStop(0, 'rgba(0,0,0,.8)');
+      g.addColorStop(.35, rusty ? '#7a4a2a' : '#6a747c');
+      g.addColorStop(.5, rusty ? '#a0683e' : '#a4aeb6');
+      g.addColorStop(1, 'rgba(0,0,0,.85)');
+      x.fillStyle = g;
+      x.fillRect(px, 0, w, s);
+      for (let y = 10 + rand() * 50; y < s - 8; y += 70 + rand() * 50) {
+        x.fillStyle = '#26282a';
+        x.fillRect(px - 3, y, w + 6, 8);
+        x.fillStyle = 'rgba(255,255,255,.14)';
+        x.fillRect(px - 3, y, w + 6, 2);
+      }
+    }
+    speckle(x, s, s, 1800, .35, '110,50,20');
+    speckle(x, s, s, 2500, .3, '0,0,0');
+    for (let i = 0; i < 25; i++) {
+      const gx = rand() * s, gy = rand() * s, len = 20 + rand() * 80;
+      const g = x.createLinearGradient(0, gy, 0, gy + len);
+      g.addColorStop(0, 'rgba(90,40,10,.4)');
+      g.addColorStop(1, 'rgba(90,40,10,0)');
+      x.fillStyle = g;
+      x.fillRect(gx, gy, 2 + rand() * 3, len);
+    }
+  });
+}
+
+function paintSlime() {
+  return makeCanvas(128, (x, s) => {
+    x.fillStyle = '#1c7a14';
+    x.fillRect(0, 0, s, s);
+    for (let i = 0; i < 80; i++) {
+      const px = rand() * s, py = rand() * s, r = 6 + rand() * 18, hot = rand() > .45;
+      tiled(x, s, s, () => {
+        const g = x.createRadialGradient(px, py, 0, px, py, r);
+        g.addColorStop(0, hot ? 'rgba(190,255,90,.9)' : 'rgba(6,40,4,.85)');
+        g.addColorStop(1, 'rgba(0,0,0,0)');
+        x.fillStyle = g;
+        x.fillRect(px - r, py - r, 2 * r, 2 * r);
+      });
+    }
+  });
+}
+
+function paintFlesh() {
+  return makeCanvas(256, (x, s) => {
+    x.fillStyle = '#3a0c0e';
+    x.fillRect(0, 0, s, s);
+    for (let i = 0; i < 140; i++) {
+      const px = rand() * s, py = rand() * s, rx = 10 + rand() * 30, ry = 6 + rand() * 18, a = rand() * 3;
+      const col = `hsl(${350 + rand() * 20},${45 + rand() * 25}%,${16 + rand() * 18}%)`;
+      tiled(x, s, s, () => {
+        x.fillStyle = col;
+        x.beginPath();
+        x.ellipse(px, py, rx, ry, a, 0, 7);
+        x.fill();
+        x.fillStyle = 'rgba(255,200,200,.08)';
+        x.beginPath();
+        x.ellipse(px - rx * .2, py - ry * .3, rx * .5, ry * .35, a, 0, 7);
+        x.fill();
+      });
+    }
+    x.lineWidth = 2;
+    for (let i = 0; i < 30; i++) {
+      let px = rand() * s, py = rand() * s;
+      const pts = [[px, py]];
+      for (let k = 0; k < 5; k++) pts.push([px += rand() * 40 - 20, py += rand() * 40 - 20]);
+      const col = rand() < .5 ? 'rgba(40,0,30,.8)' : 'rgba(120,10,30,.7)';
+      tiled(x, s, s, () => {
+        x.strokeStyle = col;
+        x.beginPath();
+        x.moveTo(...pts[0]);
+        for (const p of pts.slice(1)) x.lineTo(...p);
+        x.stroke();
+      });
+    }
+    speckle(x, s, s, 2500, .3, '0,0,0');
+    speckle(x, s, s, 800, .15, '255,160,160');
+  });
+}
+
+function paintBone() {
+  return makeCanvas(256, (x, s) => {
+    x.fillStyle = '#140e0a';
+    x.fillRect(0, 0, s, s);
+    for (let i = 0; i < 90; i++) {
+      const px = rand() * s, py = rand() * s, len = 18 + rand() * 30, a = rand() * Math.PI, w = 4 + rand() * 4;
+      const col = `hsl(${35 + rand() * 10},${20 + rand() * 15}%,${45 + rand() * 25}%)`;
+      tiled(x, s, s, () => {
+        x.save();
+        x.translate(px, py);
+        x.rotate(a);
+        x.fillStyle = col;
+        x.fillRect(-len / 2, -w / 2, len, w);
+        for (const e of [-1, 1]) {
+          x.beginPath();
+          x.arc(e * len / 2, -w * .45, w * .7, 0, 7);
+          x.arc(e * len / 2, w * .45, w * .7, 0, 7);
+          x.fill();
+        }
+        x.restore();
+      });
+    }
+    for (let i = 0; i < 14; i++) {
+      const px = rand() * s, py = rand() * s, r = 9 + rand() * 7;
+      const col = `hsl(40,${20 + rand() * 10}%,${55 + rand() * 20}%)`;
+      tiled(x, s, s, () => {
+        x.fillStyle = col;
+        x.beginPath();
+        x.arc(px, py, r, 0, 7);
+        x.fill();
+        x.fillRect(px - r * .6, py + r * .5, r * 1.2, r * .7);
+        x.fillStyle = '#0a0604';
+        x.beginPath();
+        x.arc(px - r * .38, py, r * .28, 0, 7);
+        x.arc(px + r * .38, py, r * .28, 0, 7);
+        x.fill();
+      });
+    }
+    speckle(x, s, s, 3000, .35, '0,0,0');
+    speckle(x, s, s, 600, .2, '90,20,10');
+  });
+}
+
+function paintBlood() {
+  return makeCanvas(128, (x, s) => {
+    x.fillStyle = '#1e1614';
+    x.fillRect(0, 0, s, s);
+    speckle(x, s, s, 1500, .4, '0,0,0');
+    for (let i = 0; i < 18; i++) {
+      const px = rand() * s, py = rand() * s, r = 6 + rand() * 22, e = .5 + rand() * .5, a = rand() * 3;
+      const col = `rgba(${70 + rand() * 40 | 0},4,4,.85)`;
+      tiled(x, s, s, () => {
+        x.fillStyle = col;
+        x.beginPath();
+        x.ellipse(px, py, r, r * e, a, 0, 7);
+        x.fill();
+      });
+    }
+    speckle(x, s, s, 400, .3, '120,10,10');
+  });
+}
+
 function paintDoor(stripe, glow, skull) {
   const hazard = (x, y0, h) => {
     x.save();
@@ -503,6 +656,9 @@ export function createMaterials() {
 
   const lava = new THREE.MeshBasicMaterial({ map: lavaTex, color: new THREE.Color(2.4, 2.4, 2.4) });
   lava.userData.scale = 3;
+  const slimeTex = texture(paintSlime());
+  const slime = new THREE.MeshBasicMaterial({ map: slimeTex, color: new THREE.Color(1.8, 2.2, 1.8) });
+  slime.userData.scale = 3;
 
   const materials = {
     stone: surface(paintStone(), 5, { roughness: .92 }),
@@ -526,14 +682,22 @@ export function createMaterials() {
     crate: surface(paintCrate(), 4, { roughness: .75 }, 1),
     grate: surface(paintGrate(), 5, { roughness: .45, metalness: .6 }, 1),
     lava,
-    doorPlain: door('#d8a020', '#40c0ff', false),
+    slime,
+    pipes: surface(paintPipes(), 5, { roughness: .42, metalness: .6 }),
+    flesh: surface(paintFlesh(), 6, { roughness: .32 }),
+    bone: surface(paintBone(), 6, { roughness: .6 }),
+    blood: surface(paintBlood(), 3, { roughness: .22 }),
+    doorPlain: door('#d8a020', '#c8d0d8', false),
     doorRed: door('#c81e14', '#ff2a18', false),
+    doorBlue: door('#1e4ad8', '#3a8aff', false),
+    doorYellow: door('#e0a818', '#ffd040', false),
     doorBoss: door('#6a0a06', '#ff3010', true),
   };
 
   return {
     materials,
     lavaTex,
+    slimeTex,
     glow: texture(paintGlow()),
     softGlow: texture(paintGlow('rgba(255,255,255,.9)', 'rgba(255,255,255,.25)')),
     hole: texture(paintHole()),

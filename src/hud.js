@@ -48,6 +48,39 @@ export class Hud {
     b.textContent = 'Click to play';
   }
 
+  // Level select on the title screen; locked levels are shown but disabled.
+  buildLevels(levels, unlocked) {
+    const box = $('#screen-title .levels');
+    box.innerHTML = '';
+    levels.forEach((level, i) => {
+      const b = document.createElement('button');
+      b.className = 'level';
+      b.disabled = i >= unlocked;
+      b.title = i >= unlocked ? 'Locked' : `Play ${level.name}`;
+      const num = document.createElement('span');
+      num.className = 'num';
+      num.textContent = i + 1;
+      const name = document.createElement('span');
+      name.textContent = i >= unlocked ? 'Locked' : level.name;
+      b.append(num, name);
+      b.addEventListener('click', () => this.game.action(`level:${i}`));
+      box.appendChild(b);
+    });
+    const play = $('[data-action="play"]');
+    if (!play.disabled) play.textContent = unlocked > 1 ? `Continue: ${levels[unlocked - 1].name}` : 'Click to play';
+  }
+
+  showWin(stats, name, next) {
+    const w = this.screens.win;
+    w.querySelector('[data-win-title]').textContent = next ? 'Level complete' : 'You beat Doomer';
+    w.querySelector('[data-win-level]').textContent = next ? name : 'All five levels cleared. Hell is quiet, for now.';
+    const nextButton = w.querySelector('[data-next]');
+    nextButton.hidden = !next;
+    if (next) nextButton.textContent = `Next: ${next}`;
+    w.querySelector('[data-newgame]').hidden = !!next;
+    this.showScreen('win', stats);
+  }
+
   buildSettings(container) {
     container.innerHTML = `
       <label>Graphics
@@ -135,7 +168,7 @@ export class Hud {
       });
     });
     this.set('keys', [...p.keys].join(), () => {
-      this.el.keys.innerHTML = [...p.keys].map(() => '<div class="key"></div>').join('');
+      this.el.keys.innerHTML = [...p.keys].map((k) => `<div class="key ${k}"></div>`).join('');
     });
 
     const boss = g.boss;

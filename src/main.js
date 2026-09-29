@@ -8,6 +8,7 @@ import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { createMaterials, createSky } from './textures.js';
 import { Level } from './level.js';
+import { LEVELS } from './levels.js';
 import { Particles, Decals, Debris, LightPool } from './effects.js';
 import { Sound } from './audio.js';
 import { Music } from './music.js';
@@ -27,6 +28,7 @@ const QUALITY = {
 };
 
 const SETTINGS_KEY = 'doomer.settings';
+const PROGRESS_KEY = 'doomer.progress';
 const DEFAULTS = { quality: 'high', sensitivity: 1, volume: .7, music: .5, minimap: true };
 
 function loadSettings() {
@@ -36,6 +38,21 @@ function loadSettings() {
     return { ...DEFAULTS };
   }
 }
+
+// Which levels are unlocked, and the loadout carried into each one.
+function loadProgress() {
+  try {
+    const p = JSON.parse(localStorage.getItem(PROGRESS_KEY) || '{}');
+    return { unlocked: Math.max(1, Math.min(LEVELS.length, p.unlocked | 0)), loadouts: p.loadouts || {} };
+  } catch {
+    return { unlocked: 1, loadouts: {} };
+  }
+}
+
+const HAZARD = {
+  lava: { light: 0xff4a10, ember: [3.5, 1.1, .2], damage: 9, every: .45 },
+  slime: { light: 0x50ff30, ember: [.8, 3, .4], damage: 5, every: .6 },
+};
 
 const randInt = ([a, b]) => a + Math.floor(Math.random() * (b - a + 1));
 const fmtTime = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
@@ -60,12 +77,11 @@ class Game {
     pmrem.dispose();
     this.scene.environment = this.envMap;
     this.scene.environmentIntensity = .12;
-    this.scene.add(new THREE.HemisphereLight(0x606880, 0x281810, .45));
+    this.hemi = new THREE.HemisphereLight(0x606880, 0x281810, .45);
+    this.scene.add(this.hemi);
 
     this.tex = createMaterials();
     prebake();
-    this.level = new Level();
-    for (const m of this.level.build(this.tex.materials)) this.scene.add(m);
     this.sky = createSky();
     this.scene.add(this.sky);
 
@@ -73,7 +89,7 @@ class Game {
     this.fire = new Particles(this.scene, 2500, this.tex.glow, true);
     this.dust = new Particles(this.scene, 1500, this.tex.smoke, false);
     this.decals = new Decals(this.scene, this.tex.hole);
-    this.debris = new Debris(this.scene, this.level);
+    this.debris = new Debris(this.scene, null);
     this.fx = {
       ballGeo: new THREE.SphereGeometry(1, 14, 10),
       ballMat: new THREE.MeshBasicMaterial({ color: new THREE.Color(6, 3.4, 1.2) }),
@@ -98,24 +114,17 @@ class Game {
     this.input = new Input(this);
     this.automap = new Automap(this);
     this.automap.setMini(this.settings.minimap);
-
-    this.props = [];
-    this.lavaCells = this.level.cells.filter((c) => c.lava);
-    this.addStaticLights();
-    for (const e of this.level.entities) {
-      if (e.type === 'L') addLamp(this, e.x, this.level.at(e.x, e.z).ceil, e.z);
-      if (e.type === 'F') this.props.push(new Torch(this, e.x, e.y, e.z));
-      if (e.type === 'X') this.props.push(this.exitPad = new ExitPad(this, e.x, e.y, e.z));
-    }
-    this.muzzle = this.lights.add({ pos: new THREE.Vector3(), color: 0xffb060, intensity: 0, range: 10, dynamic: true });
+    this.progress = loadProgress();
 
     this.state = 'title';
     this.enemies = [];
     this.items = [];
     this.projectiles = [];
+    this.props = [];
+    this.levelObjects = [];
     this.time = 0;
     this.emberAcc = 0;
-    this.reset();
+    this.loadLevel(0);
     this.applyQuality(this.settings.quality);
     addEventListener('resize', () => this.resize());
     document.addEventListener('visibilitychange', () => {
@@ -128,17 +137,69 @@ class Game {
     requestAnimationFrame(this.frame);
     this.hud.showScreen('title');
     this.hud.ready();
+    this.hud.buildLevels(LEVELS, this.progress.unlocked);
   }
 
-  addStaticLights() {
-    for (const c of this.lavaCells) {
+  // Swap in a level: tear down the old geometry, props and lights, build the
+  // new ones, then spawn everything. `loadout` is what the player carries in.
+  loadLevel(index, loadout = null) {
+    const def = LEVELS[index];
+    for (const o of this.levelObjects) {
+      this.scene.remove(o);
+      o.geometry?.dispose();
+    }
+    this.lights.clear();
+    this.levelIndex = index;
+    this.def = def;
+    this.level = new Level(def.build(), def.presets);
+    this.debris.level = this.level;
+    this.levelObjects = this.level.build(this.tex.materials);
+    for (const m of this.levelObjects) this.scene.add(m);
+
+    const t = def.theme;
+    this.scene.fog.color.set(t.fog);
+    this.scene.fog.density = t.density;
+    this.scene.background.set(t.fog).multiplyScalar(.6);
+    this.hemi.color.set(t.hemi[0]);
+    this.hemi.groundColor.set(t.hemi[1]);
+    this.hemi.intensity = t.hemi[2];
+
+    this.hazardCells = this.level.cells.filter((c) => c.lava);
+    for (const c of this.hazardCells) {
       if (c.x % 3 === 0 && c.z % 3 === 0) {
-        this.lights.add({ pos: new THREE.Vector3(c.x + .5, c.floor + 1, c.z + .5), color: 0xff4a10, intensity: 18, range: 7, flicker: .6 });
+        const light = HAZARD[c.slime ? 'slime' : 'lava'].light;
+        this.lights.add({ pos: new THREE.Vector3(c.x + .5, c.floor + 1, c.z + .5), color: light, intensity: 18, range: 7, flicker: .6 });
       }
     }
-    // Hellfire glow over the open courtyard.
-    for (const [x, z] of [[30, 10], [41, 10], [35, 19]]) {
-      this.lights.add({ pos: new THREE.Vector3(x, 9, z), color: 0xff6a3a, intensity: 220, range: 24 });
+    for (const [x, y, z, color, intensity, range] of def.lights || []) {
+      this.lights.add({ pos: new THREE.Vector3(x, y, z), color, intensity, range });
+    }
+    this.props = [];
+    this.exitPad = null;
+    for (const e of this.level.entities) {
+      let prop = null;
+      if (e.type === 'L') prop = addLamp(this, e.x, this.level.at(e.x, e.z).ceil, e.z, t.lamp);
+      if (e.type === 'F') this.props.push(prop = new Torch(this, e.x, e.y, e.z));
+      if (e.type === 'X') this.props.push(prop = this.exitPad = new ExitPad(this, e.x, e.y, e.z));
+      if (prop) this.levelObjects.push(prop.root);
+    }
+    this.muzzle = this.lights.add({ pos: new THREE.Vector3(), color: 0xffb060, intensity: 0, range: 10, dynamic: true });
+    this.automap.setLevel(this.level);
+    this.startLoadout = loadout;
+    this.reset();
+  }
+
+  // What the player carries into the next level (keys stay behind).
+  loadout() {
+    const p = this.player;
+    return { health: Math.max(1, Math.ceil(p.health)), armor: p.armor, ammo: { ...p.ammo }, owned: [...p.owned] };
+  }
+
+  saveProgress() {
+    try {
+      localStorage.setItem(PROGRESS_KEY, JSON.stringify(this.progress));
+    } catch {
+      // Storage can be unavailable (private mode); progress just won't persist.
     }
   }
 
@@ -213,15 +274,17 @@ class Game {
     this.level.resetDoors();
 
     let spawn = { x: 2.5, y: 0, z: 2.5, yaw: 0 };
+    const MONSTERS = { I: 'imp', Z: 'brute', O: 'skull', W: 'boss' };
     for (const e of this.level.entities) {
       if (e.type === '@') spawn = { x: e.x, y: e.y, z: e.z, yaw: 0 };
-      else if (e.type === 'I') this.enemies.push(new Enemy(this, 'imp', e.x, e.y, e.z));
-      else if (e.type === 'Z') this.enemies.push(new Enemy(this, 'brute', e.x, e.y, e.z));
-      else if (e.type === 'W') this.enemies.push(this.boss = new Enemy(this, 'boss', e.x, e.y, e.z));
-      else if (ITEMS[e.type]) this.items.push(new Item(this, e.type, e.x, e.y, e.z));
+      else if (MONSTERS[e.type]) {
+        const m = new Enemy(this, MONSTERS[e.type], e.x, e.y, e.z);
+        this.enemies.push(m);
+        if (e.type === 'W') this.boss = m;
+      } else if (ITEMS[e.type]) this.items.push(new Item(this, e.type, e.x, e.y, e.z));
     }
-    if (this.boss) this.boss.model.root.rotation.y = this.boss.yaw = -Math.PI / 2;
-    this.player.reset(spawn);
+    if (this.boss) this.boss.model.root.rotation.y = this.boss.yaw = this.def.bossYaw ?? -Math.PI / 2;
+    this.player.reset(spawn, this.startLoadout);
     this.arsenal.reset();
     this.stats = { kills: 0, total: this.enemies.length, time: 0 };
     this.flowTimer = 0;
@@ -229,18 +292,37 @@ class Game {
     this.deathT = 0;
     this.combatHold = 0;
     this.music.setMode('explore');
+    this.spawn = spawn;
     this.level.updateFlow(spawn.x, spawn.z);
     this.automap.reset();
     this.hud.reset();
   }
 
   action(name) {
-    if (name === 'play') this.start();
+    if (name === 'play') this.startLevel(this.progress.unlocked - 1);
+    if (name.startsWith('level:')) this.startLevel(parseInt(name.slice(6), 10));
     if (name === 'resume') this.resume();
     if (name === 'restart') {
       this.reset();
       this.start();
     }
+    if (name === 'next') {
+      this.loadLevel(this.levelIndex + 1, this.progress.loadouts[this.levelIndex + 1] || this.loadout());
+      this.start();
+    }
+    if (name === 'newgame') {
+      this.loadLevel(0);
+      this.start();
+    }
+  }
+
+  // Start a level from the title screen, carrying in its saved loadout.
+  startLevel(index) {
+    if (index >= this.progress.unlocked) return;
+    if (index !== this.levelIndex || this.stats.time > 0) this.loadLevel(index, this.progress.loadouts[index] || null);
+    else this.startLoadout = this.progress.loadouts[index] || null;
+    if (index === this.levelIndex && this.startLoadout) this.player.reset(this.spawn, this.startLoadout);
+    this.start();
   }
 
   start() {
@@ -250,8 +332,9 @@ class Game {
     this.state = 'playing';
     this.hud.showScreen(null);
     this.input.lock();
-    if (this.player.health === 100 && this.stats.time === 0) {
-      this.hud.message('Find the red keycard. Kill everything.');
+    if (this.stats.time === 0) {
+      this.hud.message(`Level ${this.levelIndex + 1}: ${this.def.name}`);
+      this.hud.message(this.def.hint);
     }
   }
 
@@ -283,7 +366,14 @@ class Game {
     this.music.setMode('explore');
     this.sound.play('exit');
     this.input.unlock();
-    this.hud.showScreen('win', this.statsText());
+    const next = this.levelIndex + 1;
+    if (next < LEVELS.length) {
+      this.progress.unlocked = Math.max(this.progress.unlocked, next + 1);
+      this.progress.loadouts[next] = this.loadout();
+      this.saveProgress();
+      this.hud.buildLevels(LEVELS, this.progress.unlocked);
+    }
+    this.hud.showWin(this.statsText(), this.def.name, next < LEVELS.length ? LEVELS[next].name : null);
   }
 
   statsText() {
@@ -356,16 +446,17 @@ class Game {
         this.flashes.splice(i, 1);
       }
     }
-    // Embers drifting up from nearby lava.
+    // Embers drifting up from nearby lava, bubbles off the slime.
     this.emberAcc += dt * 70;
     const cam = this.camera.position;
-    while (this.emberAcc > 1 && this.lavaCells.length) {
+    while (this.emberAcc > 1 && this.hazardCells.length) {
       this.emberAcc--;
-      const c = this.lavaCells[(Math.random() * this.lavaCells.length) | 0];
+      const c = this.hazardCells[(Math.random() * this.hazardCells.length) | 0];
       if (Math.abs(c.x - cam.x) + Math.abs(c.z - cam.z) > 26) continue;
+      const [r, g, b] = HAZARD[c.slime ? 'slime' : 'lava'].ember;
       this.fire.spawn(c.x + Math.random(), c.floor + .1, c.z + Math.random(),
         (Math.random() - .5) * .4, .6 + Math.random() * 1.2, (Math.random() - .5) * .4,
-        2 + Math.random() * 2.5, .07, .02, 3.5, 1.1, .2, 1, -.1, .3);
+        2 + Math.random() * 2.5, .07, .02, r, g, b, 1, -.1, .3);
     }
     this.fire.update(dt);
     this.dust.update(dt);
@@ -374,9 +465,11 @@ class Game {
 
   attract(dt) {
     this.input.consumeLook();
-    const t = this.time * .12;
-    this.camera.position.set(11.5 + Math.sin(t) * 3, 3.1 + Math.sin(t * .7) * .3, 21.5 + Math.cos(t * .8) * 1.2);
-    this.camera.lookAt(11.5 + Math.sin(t * .5) * 2.5, 2.6, 6);
+    const t = this.time * .12, a = this.def.attract;
+    if (a) {
+      this.camera.position.set(a.from[0] + Math.sin(t) * 3, a.from[1] + Math.sin(t * .7) * .3, a.from[2] + Math.cos(t * .8) * 1.2);
+      this.camera.lookAt(a.to[0] + Math.sin(t * .5) * 2.5, a.to[1], a.to[2]);
+    }
     for (const e of this.enemies) {
       if (e.dead) continue;
       e.anim += dt;
@@ -391,6 +484,7 @@ class Game {
     this.sky.position.copy(this.camera.position);
     this.sky.material.uniforms.time.value = this.time;
     this.tex.lavaTex.offset.set(this.time * .03, Math.sin(this.time * .4) * .06);
+    this.tex.slimeTex.offset.set(Math.sin(this.time * .3) * .08, this.time * .02);
     const L = this.sound.listener;
     L.x = this.camera.position.x;
     L.z = this.camera.position.z;
@@ -426,8 +520,8 @@ class Game {
       const dx = Math.max(d.minX - p.pos.x, 0, p.pos.x - d.maxX);
       const dz = Math.max(d.minZ - p.pos.z, 0, p.pos.z - d.maxZ);
       if (Math.hypot(dx, dz) > 1.6) continue;
-      if (d.type === 'red' && !p.keys.has('red')) {
-        this.locked(d, 'You need the red keycard');
+      if (['red', 'blue', 'yellow'].includes(d.type) && !p.keys.has(d.type)) {
+        this.locked(d, `You need the ${d.type} keycard`);
         continue;
       }
       if (d.type === 'boss') {

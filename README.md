@@ -30,7 +30,7 @@ Then open <http://localhost:8000>.
 | --- | --- |
 | `index.html`, `style.css` | Page, HUD and menus |
 | `src/main.js` | Game setup, main loop, combat and effects glue |
-| `src/map.js` | The level layout, drawn as rectangles on a grid |
+| `src/levels.js` | The five levels: layouts drawn as rectangles on a grid, plus each level's theme |
 | `src/level.js` | Cell presets, level geometry, collision, line of sight, pathfinding, doors |
 | `src/textures.js` | Procedural textures, normal maps, materials and the sky |
 | `src/player.js` | Player movement, health and camera |
@@ -44,6 +44,6 @@ Then open <http://localhost:8000>.
 | `src/automap.js` | Explored-area tracking, corner minimap and full-screen map |
 | `src/hud.js`, `src/input.js` | HUD, menus, settings, keyboard and mouse |
 
-## Editing the level
+## Editing levels
 
-The level is laid out in `src/map.js` as filled rectangles on a 72 × 46 grid of 1 m cells. The character legend is in `src/level.js` (`PRESETS` for cells, `ENTITY_CHARS` for monsters, pickups and lights). Each entity stands on the floor of a neighbouring cell.
+Levels live in `src/levels.js`. Each one is laid out as filled rectangles on a grid of 1 m cells, and has a name, a hint, a theme (fog, ambient light, lamp colour), optional extra lights and its own cell presets. The shared character legend is in `src/level.js` (`PRESETS` for cells, `ENTITY_CHARS` for monsters, pickups and lights). Each entity stands on the floor of a neighbouring cell.

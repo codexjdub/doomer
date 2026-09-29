@@ -13,15 +13,16 @@ export class Player {
     this.height = 1.75;
   }
 
-  reset(spawn) {
+  // `loadout` carries health, armor, ammo and weapons in from the last level.
+  reset(spawn, loadout = null) {
     this.pos.set(spawn.x, spawn.y, spawn.z);
     this.vel.set(0, 0, 0);
     this.yaw = spawn.yaw ?? 0;
     this.pitch = 0;
-    this.health = 100;
-    this.armor = 0;
-    this.ammo = { bullets: 50, shells: 0 };
-    this.owned = [true, false, false];
+    this.health = loadout?.health ?? 100;
+    this.armor = loadout?.armor ?? 0;
+    this.ammo = { bullets: 50, shells: 0, ...loadout?.ammo };
+    this.owned = loadout?.owned ? [...loadout.owned] : [true, false, false];
     this.keys = new Set();
     this.dead = false;
     this.grounded = true;
@@ -155,14 +156,14 @@ export class Player {
     }
     this.stepOffset = THREE.MathUtils.clamp(this.stepOffset, -1, 1);
 
-    // Lava burns.
+    // Lava burns; slime eats at you more slowly.
     const cell = L.at(this.pos.x, this.pos.z);
     this.inLava = cell.lava && this.pos.y <= cell.floor + .05 && !this.dead;
     if (this.inLava) {
       this.lavaTimer -= dt;
       if (this.lavaTimer <= 0) {
-        this.lavaTimer = .45;
-        this.hurt(9, null, g);
+        this.lavaTimer = cell.slime ? .6 : .45;
+        this.hurt(cell.slime ? 5 : 9, null, g);
       }
     } else {
       this.lavaTimer = 0;

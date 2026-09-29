@@ -13,7 +13,11 @@ export const ITEMS = {
   'G': { kind: 'weapon', weapon: 1, ammo: 'shells', amount: 10, label: 'Shotgun', glow: 0xff8030 },
   'C': { kind: 'weapon', weapon: 2, ammo: 'bullets', amount: 50, label: 'Chaingun', glow: 0xff8030 },
   'K': { kind: 'key', key: 'red', label: 'Red keycard', glow: 0xff2010 },
+  'J': { kind: 'key', key: 'blue', label: 'Blue keycard', glow: 0x2a6aff },
+  'V': { kind: 'key', key: 'yellow', label: 'Yellow keycard', glow: 0xffc020 },
 };
+
+export const KEY_COLORS = { red: [3, .25, .12], blue: [.3, .8, 3.5], yellow: [3, 2.2, .3] };
 
 const hdr = (r, g, b) => new THREE.MeshBasicMaterial({ color: new THREE.Color(r, g, b) });
 const std = (color, metalness = .1, roughness = .5) => new THREE.MeshStandardMaterial({ color, metalness, roughness });
@@ -85,8 +89,10 @@ function buildItem(type) {
       g.add(m);
       break;
     }
-    case 'K': {
-      box(g, .3, .44, .03, hdr(3, .25, .12));
+    case 'K':
+    case 'J':
+    case 'V': {
+      box(g, .3, .44, .03, hdr(...KEY_COLORS[ITEMS[type].key]));
       box(g, .22, .06, .035, hdr(3, 3, 3), 0, .12, 0);
       break;
     }
@@ -119,7 +125,7 @@ export class Item {
     glow.scale.setScalar(1.3);
     this.root.add(glow);
     game.scene.add(this.root);
-    if (type === 'K') this.light = game.lights.add({ pos: new THREE.Vector3(x, y + 1, z), color: 0xff2a1a, intensity: 10, range: 5 });
+    if (this.def.kind === 'key') this.light = game.lights.add({ pos: new THREE.Vector3(x, y + 1, z), color: this.def.glow, intensity: 10, range: 5 });
   }
 
   update(dt) {
@@ -136,12 +142,14 @@ export class Item {
 
 // ---------------------------------------------------------------- props
 
-export function addLamp(game, x, ceil, z) {
+// Props return their scene objects and light sources so a level can remove them.
+export function addLamp(game, x, ceil, z, color = 0xffe0b8) {
   const g = new THREE.Group();
   g.position.set(x, ceil, z);
   const housing = new THREE.Mesh(new THREE.BoxGeometry(1, .12, .5), std(0x2a2d31, .7, .4));
   housing.position.y = -.06;
-  const panel = new THREE.Mesh(new THREE.PlaneGeometry(.86, .36), hdr(5, 4.4, 3.6));
+  const tint = new THREE.Color(color);
+  const panel = new THREE.Mesh(new THREE.PlaneGeometry(.86, .36), hdr(tint.r * 5, tint.g * 5, tint.b * 5));
   panel.rotation.x = Math.PI / 2;
   panel.position.y = -.125;
   for (const s of [-1, 1]) {
@@ -152,13 +160,14 @@ export function addLamp(game, x, ceil, z) {
   g.add(housing, panel);
   game.scene.add(g);
   const h = ceil - game.level.at(x, z).floor;
-  game.lights.add({
+  const light = game.lights.add({
     pos: new THREE.Vector3(x, ceil - .4, z),
-    color: 0xffe0b8,
+    color,
     intensity: 2.2 * h * h,
     range: h * 2.4 + 5,
     shadow: true,
   });
+  return { root: g, light };
 }
 
 export class Torch {
@@ -179,7 +188,8 @@ export class Torch {
     for (const m of [stand, base, bowl]) m.castShadow = true;
     g.add(stand, base, bowl, coals);
     game.scene.add(g);
-    game.lights.add({ pos: this.pos.clone().setY(y + 1.8), color: 0xff7a30, intensity: 22, range: 9, flicker: 1.4 });
+    this.root = g;
+    this.light = game.lights.add({ pos: this.pos.clone().setY(y + 1.8), color: 0xff7a30, intensity: 22, range: 9, flicker: 1.4 });
     this.acc = 0;
   }
 
@@ -215,7 +225,8 @@ export class ExitPad {
     disc.position.y = .125;
     g.add(base, this.ring, disc);
     game.scene.add(g);
-    game.lights.add({ pos: new THREE.Vector3(x, y + 1.2, z), color: 0x40ffb0, intensity: 20, range: 7 });
+    this.root = g;
+    this.light = game.lights.add({ pos: new THREE.Vector3(x, y + 1.2, z), color: 0x40ffb0, intensity: 20, range: 7 });
     this.t = 0;
   }
 

@@ -16,6 +16,11 @@ export const TYPES = {
     hp: 1600, speed: 2.8, radius: 1.2, height: 5.4, pain: .06, ranged: true,
     melee: [22, 36], reach: 2.8, missile: [16, 26], sight: 'bossSight', scale: 2.3,
   },
+  // Flies at head height, winds up, then charges in a straight line.
+  skull: {
+    hp: 25, speed: 4.5, radius: .35, height: .7, pain: 1, ranged: false, fly: true,
+    melee: [8, 14], reach: .5, sight: 'skullSight', scale: 1,
+  },
 };
 
 const randInt = ([a, b]) => a + Math.floor(Math.random() * (b - a + 1));
@@ -54,7 +59,20 @@ export class Enemy {
     game.scene.add(this.model.root);
     if (this.model.parts.core) {
       this.glow = game.lights.add({ pos: new THREE.Vector3(), color: 0xff5020, intensity: 30, range: 9, flicker: 1 });
+      this.glowHeight = 3.5;
     }
+    if (this.def.fly) {
+      this.hover = 1.05 + Math.random() * .3;
+      this.pos.y += this.hover;
+      this.model.root.position.copy(this.pos);
+      this.glow = game.lights.add({ pos: new THREE.Vector3(), color: 0xff6a20, intensity: 5, range: 4, flicker: 1.5 });
+      this.glowHeight = .36;
+      this.trailAcc = 0;
+    }
+  }
+
+  center() {
+    return new THREE.Vector3(this.pos.x, this.pos.y + this.def.height / 2, this.pos.z);
   }
 
   eye() {
@@ -76,7 +94,8 @@ export class Enemy {
       this.flash -= dt;
       this.model.material.userData.uniforms.flash.value = this.flash > 0 ? .5 : 0;
     }
-    if (this.glow) this.glow.pos.copy(this.pos).setY(this.pos.y + 3.5);
+    if (this.glow) this.glow.pos.copy(this.pos).setY(this.pos.y + this.glowHeight);
+    if (T.fly) this.trail(dt, g);
 
     this.sightTimer -= dt;
     if (this.sightTimer <= 0) {
@@ -103,6 +122,11 @@ export class Enemy {
       this.pose('jaw', .5 * k);
       if (this.timer <= 0) this.state = 'chase';
       this.physics(dt, g, 0, 0);
+      return;
+    }
+
+    if (T.fly) {
+      this.flyerUpdate(dt, g, dx, dz, dist);
       return;
     }
 
@@ -186,6 +210,7 @@ export class Enemy {
   }
 
   physics(dt, g, vx, vz) {
+    if (this.def.fly) return this.flyPhysics(dt, g, vx, vz);
     const L = g.level, T = this.def, r = T.radius, step = .65;
     let moved = false;
     const here = L.at(this.pos.x, this.pos.z);
@@ -225,6 +250,143 @@ export class Enemy {
     this.model.root.position.copy(this.pos);
     this.model.root.rotation.y = this.yaw;
     return moved;
+  }
+
+  // ------------------------------------------------------------ flying
+
+  // Hover above whatever floor is below, drifting over ledges and lava.
+  flyPhysics(dt, g, vx, vz) {
+    const L = g.level, T = this.def, r = T.radius;
+    let moved = false;
+    if (vx) {
+      const nx = this.pos.x + vx * dt;
+      if (L.fits(nx, this.pos.z, r, this.pos.y, 3, T.height)) {
+        this.pos.x = nx;
+        moved = true;
+      }
+    }
+    if (vz) {
+      const nz = this.pos.z + vz * dt;
+      if (L.fits(this.pos.x, nz, r, this.pos.y, 3, T.height)) {
+        this.pos.z = nz;
+        moved = true;
+      }
+    }
+    for (const o of g.enemies) {
+      if (o === this || o.dead || !o.def.fly) continue;
+      const ox = this.pos.x - o.pos.x, oz = this.pos.z - o.pos.z, d = Math.hypot(ox, oz), min = r + o.def.radius;
+      if (d >= min || d < 1e-4 || Math.abs(o.pos.y - this.pos.y) > .8) continue;
+      const push = Math.min(.08, (min - d) * .5), px = this.pos.x + ox / d * push, pz = this.pos.z + oz / d * push;
+      if (L.fits(px, pz, r, this.pos.y, 3, T.height)) {
+        this.pos.x = px;
+        this.pos.z = pz;
+      }
+    }
+    const span = L.span(this.pos.x, this.pos.z, r);
+    const target = Math.min(span.floor + this.hover + Math.sin(this.anim * 2.2 + this.seed) * .12, span.ceil - T.height - .1);
+    this.pos.y += (target - this.pos.y) * Math.min(1, dt * 3);
+    this.model.root.position.copy(this.pos);
+    this.model.root.rotation.y = this.yaw;
+    return moved;
+  }
+
+  // Circle in, wind up with a shudder and a scream, then charge.
+  flyerUpdate(dt, g, dx, dz, dist) {
+    const p = g.player, L = g.level, T = this.def, toPlayer = Math.atan2(dx, dz);
+    if (this.state === 'attack') {
+      this.timer -= dt;
+      if (!this.dash) {
+        this.turnTo(toPlayer, dt, 12);
+        this.pose('jaw', .6);
+        this.pulse(1.5 * (1 - this.timer / .5));
+        this.flyPhysics(dt, g, 0, 0);
+        this.model.root.position.x += (Math.random() - .5) * .06;
+        this.model.root.position.y += (Math.random() - .5) * .06;
+        if (this.timer <= 0) {
+          this.dash = p.eye().sub(this.center()).normalize().multiplyScalar(15);
+          this.timer = 1.1;
+          g.sound.play('skullCharge', this.pos);
+        }
+        return;
+      }
+      const next = this.pos.clone().addScaledVector(this.dash, dt);
+      const mid = next.y + T.height / 2;
+      const hitWall = !L.open(next.x, mid, next.z) || !L.fits(next.x, next.z, T.radius, next.y, 3, T.height)
+        || next.y < L.at(next.x, next.z).floor;
+      if (!hitWall) this.pos.copy(next);
+      this.model.root.position.copy(this.pos);
+      this.yaw = Math.atan2(this.dash.x, this.dash.z);
+      this.model.root.rotation.y = this.yaw;
+      const c = this.center();
+      const horiz = Math.hypot(p.pos.x - c.x, p.pos.z - c.z);
+      if (!p.dead && horiz < T.radius + p.radius + .15 && c.y > p.pos.y - .2 && c.y < p.pos.y + p.height + .2) {
+        p.hurt(randInt(T.melee), c, g);
+        g.sound.play('bite', c);
+        // Bounce back off the player.
+        const back = new THREE.Vector3(-dx, 0, -dz).normalize().multiplyScalar(.6);
+        this.endCharge();
+        this.retreat = 1.2;
+        this.cooldown = 2 + Math.random() * 1.5;
+        if (L.fits(this.pos.x + back.x, this.pos.z + back.z, T.radius, this.pos.y, 3, T.height)) this.pos.add(back);
+        return;
+      }
+      if (hitWall || this.timer <= 0) this.endCharge();
+      return;
+    }
+
+    this.cooldown -= dt;
+    this.retreat = Math.max(0, (this.retreat || 0) - dt);
+    // Only two skulls wind up or charge at once; the rest circle and wait.
+    const charging = g.enemies.filter((e) => e.def.fly && !e.dead && e.state === 'attack').length;
+    if (this.cooldown <= 0 && this.sees && dist > 3.5 && dist < 14 && !p.dead && !this.retreat) {
+      if (charging < 2) {
+        this.state = 'attack';
+        this.dash = null;
+        this.timer = .5;
+        g.sound.play('skullSight', this.pos, .7);
+        return;
+      }
+      this.cooldown = .4 + Math.random() * .5;
+    }
+    let dir = null;
+    if (this.sees) {
+      // Back off after a hit or when too close to charge, circling as it goes.
+      const side = Math.sin(this.seed * 7) > 0 ? 1 : -1;
+      const toward = this.retreat || dist < 3.5 ? -1 : dist < 6 ? 0 : 1;
+      dir = { x: toward * dx / dist - side * dz / dist, z: toward * dz / dist + side * dx / dist };
+    } else {
+      dir = L.flowDir(this.pos.x, this.pos.z);
+    }
+    let vx = 0, vz = 0;
+    if (dir && !p.dead) {
+      const l = Math.hypot(dir.x, dir.z) || 1;
+      vx = dir.x / l * T.speed;
+      vz = dir.z / l * T.speed;
+    }
+    this.turnTo(this.sees ? toPlayer : Math.atan2(vx, vz || 1e-6), dt, 6);
+    this.flyPhysics(dt, g, vx, vz);
+    this.pose('jaw', .2 + Math.abs(Math.sin(this.anim * 9)) * .3);
+    this.pulse();
+  }
+
+  endCharge() {
+    this.state = 'chase';
+    this.dash = null;
+    this.cooldown = 1.5 + Math.random() * 1.5;
+  }
+
+  // Flames streaming off the skull.
+  trail(dt, g) {
+    this.trailAcc += dt * (this.dash ? 90 : 35);
+    const c = this.center();
+    while (this.trailAcc > 1) {
+      this.trailAcc--;
+      g.fire.spawn(
+        c.x + (Math.random() - .5) * .3, c.y + (Math.random() - .3) * .3, c.z + (Math.random() - .5) * .3,
+        (Math.random() - .5) * .4, .6 + Math.random() * .8, (Math.random() - .5) * .4,
+        .25 + Math.random() * .25, .3 + Math.random() * .2, .02, 3.4, 1.2, .25, 1, -1, 1,
+      );
+    }
   }
 
   // ------------------------------------------------------------ attacks
@@ -288,6 +450,7 @@ export class Enemy {
     }
     if (Math.random() < this.def.pain * Math.min(1, amount / 14)) {
       this.state = 'pain';
+      this.dash = null;
       this.timer = .22;
       g.sound.play('pain', this.pos, .8);
     }
@@ -301,7 +464,8 @@ export class Enemy {
     g.sound.play('gib', this.pos);
     if (this.glow) g.lights.remove(this.glow);
     const s = this.def.scale, h = this.def.height;
-    g.blood(this.pos.x, this.pos.y + h * .55, this.pos.z, this.type === 'boss' ? 160 : 45, 3 + s);
+    if (this.def.fly) g.explosion(this.center(), false, false);
+    else g.blood(this.pos.x, this.pos.y + h * .55, this.pos.z, this.type === 'boss' ? 160 : 45, 3 + s);
     g.debris.explode(this.model.root, this.type === 'boss' ? 7 : 4 + Math.min(4, amount / 20), dir);
     g.onEnemyDeath(this);
   }

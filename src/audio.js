@@ -204,6 +204,18 @@ export class Sound {
         this.noise(o, t, 1.6, { type: 'lowpass', freq: 500, freqEnd: 200, gain: .5, attack: .15 });
         break;
       }
+      case 'skullSight': {
+        const o = this.out(pos, vol, .3), f = 900 * r();
+        this.tone(o, t, .45, { type: 'sawtooth', freq: f, freqEnd: f * 1.6, gain: .3, lowpass: 3000, vibrato: [35, 60], attack: .02 });
+        this.noise(o, t, .4, { freq: 2400, q: 3, gain: .25, attack: .03 });
+        break;
+      }
+      case 'skullCharge': {
+        const o = this.out(pos, vol, .3);
+        this.noise(o, t, .6, { freq: 500, freqEnd: 2600, q: 1.2, gain: .6, attack: .03 });
+        this.tone(o, t, .5, { type: 'sawtooth', freq: 1400, freqEnd: 600, gain: .25, lowpass: 3500, vibrato: [40, 80] });
+        break;
+      }
       case 'pain': {
         const o = this.out(pos, vol, .2), f = 320 * r();
         this.tone(o, t, .22, { type: 'sawtooth', freq: f, freqEnd: f * .55, gain: .45, lowpass: 1400 });

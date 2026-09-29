@@ -686,7 +686,50 @@ function bossRig() {
   };
 }
 
-const RIGS = { imp: impRig, brute: bruteRig, boss: bossRig };
+// A flying skull wreathed in fire; the cracks in the bone glow.
+function skullRig() {
+  const bumps3 = (x, y, z) => .0022 * noise3(x * 45, y * 45, z * 45);
+  const horn = (s) => chain([[.1 * s, .12, 0], [.18 * s, .2, -.06], [.2 * s, .3, -.16]], [.03, .021, .012], 'bone', .02);
+  return {
+    step: .009,
+    palette: { skin: 0xa89878, dark: 0x0a0604, bone: 0x6a5c4a, metal: 0x3a3c40, ash: 0x4a4038, flesh: 0x6a0c08, blood: 0x2a0202, gum: 0x3a0806 },
+    glow: 0xff6a10,
+    glowStrength: 4,
+    eyes: [9, 3.2, .5],
+    veinFreq: 9,
+    veinWidth: .07,
+    veinMask: () => .9,
+    parts: [
+      {
+        name: 'body', parent: null, pivot: [0, .34, 0],
+        prims: [
+          ellipsoid([0, .04, -.02], [.15, .15, .17], 'skin', .04),
+          ellipsoid([0, .06, .09], [.14, .05, .07], 'skin', .03),
+          ellipsoid([.08, -.04, .1], [.045, .04, .05], 'skin', .03),
+          ellipsoid([-.08, -.04, .1], [.045, .04, .05], 'skin', .03),
+          ellipsoid([0, -.06, .1], [.07, .05, .08], 'skin', .03),
+          ...horn(1), ...horn(-1),
+          cut(sphere([.055, .01, .15], .042, 'skin', .015)),
+          cut(sphere([-.055, .01, .15], .042, 'skin', .015)),
+          cut(ellipsoid([0, -.035, .175], [.018, .03, .03], 'skin', .01)),
+        ],
+        detail: bumps3,
+        eyes: [[.055, .01, .13], [-.055, .01, .13]], eyeSize: .022,
+        spikes: [[[.2, .3, -.16], [.17, .38, -.3], .012, 'bone'], [[-.2, .3, -.16], [-.17, .38, -.3], .012, 'bone']],
+        teeth: { from: -.05, to: .05, count: 8, y: -.1, z: .155, len: .035, r: .007, dir: -1, arc: .03 },
+      },
+      {
+        name: 'jaw', parent: 'body', pivot: [0, -.09, .02],
+        prims: [ellipsoid([0, -.03, .08], [.065, .025, .08], 'skin', .03)],
+        detail: bumps3,
+        teeth: { from: -.045, to: .045, count: 7, y: -.012, z: .14, len: .03, r: .006, dir: 1, arc: .03 },
+      },
+    ],
+    pose: { jaw: [.25, 0, 0] },
+  };
+}
+
+const RIGS = { imp: impRig, brute: bruteRig, boss: bossRig, skull: skullRig };
 
 // ---------------------------------------------------------------- assembly
 

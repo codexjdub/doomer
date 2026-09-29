@@ -1,10 +1,7 @@
-// The level: a grid of 1 m cells (laid out in map.js). Each character is
+// A level: a grid of 1 m cells (laid out in levels.js). Each character is
 // either a cell preset (walls, floors at different heights, lava, doors) or
 // an entity that stands on the floor of a neighbouring cell.
 import * as THREE from 'three';
-import { buildMap } from './map.js';
-
-export const MAP = buildMap();
 
 // Cell presets. floor/ceil are heights in metres. ftex/ctex/side name the
 // materials for the floor, ceiling and the step faces this cell exposes to
@@ -16,6 +13,9 @@ export const PRESETS = {
   '#': { solid: true, wall: 'stone' },
   'M': { solid: true, wall: 'panel' },
   'T': { solid: true, wall: 'tech' },
+  'P': { solid: true, wall: 'pipes' },
+  '&': { solid: true, wall: 'flesh' },
+  '$': { solid: true, wall: 'bone' },
   // Start room and exit room
   '.': room(0, 4.5, 'metalFloor', 'ceiling', 'panel'),
   'N': room(1.2, 4.5, 'crate', 'ceiling', 'crate'),
@@ -49,18 +49,24 @@ export const PRESETS = {
   'D': room(0, 3.2, 'grate', 'ceiling', 'panel', { door: 'plain' }),
   'R': room(0, 3.2, 'grate', 'ceiling', 'panel', { door: 'red' }),
   'B': room(0, 3.2, 'grate', 'ceiling', 'panel', { door: 'boss' }),
+  '[': room(0, 3.2, 'grate', 'ceiling', 'panel', { door: 'blue' }),
+  ']': room(0, 3.2, 'grate', 'ceiling', 'panel', { door: 'yellow' }),
 };
 
-// @ player start   I imp   Z brute   W warlord (boss)
-// + health  H medkit  A armor  S shells  U bullets
-// G shotgun  C chaingun  K red keycard  L ceiling lamp  F torch  X exit
-export const ENTITY_CHARS = '@IZW+HASUGCKLFX';
+// Helpers for level-specific presets in levels.js.
+export { room, sky };
+
+// @ player start   I imp   Z brute   O burning skull   W warlord (boss)
+// + health  H medkit  A armor  S shells  U bullets  G shotgun  C chaingun
+// K red keycard  J blue keycard  V yellow keycard  L ceiling lamp  F torch  X exit
+export const ENTITY_CHARS = '@IZOW+HASUGCKJVLFX';
 
 const OUTSIDE = { solid: true, wall: 'stone', floor: 0, ceil: 0 };
 const DIRS = [[-1, 0], [1, 0], [0, -1], [0, 1]];
 
 export class Level {
-  constructor(rows = MAP) {
+  constructor(rows, extraPresets = {}) {
+    const presets = { ...PRESETS, ...extraPresets };
     this.h = rows.length;
     this.w = Math.max(...rows.map((r) => r.length));
     this.cells = [];
@@ -72,9 +78,9 @@ export class Level {
         let ch = rows[z][x] ?? '#';
         if (ENTITY_CHARS.includes(ch)) {
           this.entities.push({ type: ch, x: x + .5, z: z + .5 });
-          ch = inheritPreset(rows, x, z);
+          ch = inheritPreset(rows, x, z, presets);
         }
-        const p = PRESETS[ch] || PRESETS['#'];
+        const p = presets[ch] || presets['#'];
         this.cells.push({
           x, z, ch,
           solid: !!p.solid,
@@ -86,6 +92,7 @@ export class Level {
           side: p.side || 'panel',
           sky: !!p.sky,
           lava: !!p.lava,
+          slime: !!p.slime,
           doorType: p.door || null,
           door: null,
         });
@@ -210,7 +217,10 @@ export class Level {
       meshes.push(mesh);
     }
 
-    const doorMats = { plain: materials.doorPlain, red: materials.doorRed, boss: materials.doorBoss };
+    const doorMats = {
+      plain: materials.doorPlain, red: materials.doorRed, blue: materials.doorBlue,
+      yellow: materials.doorYellow, boss: materials.doorBoss,
+    };
     for (const d of this.doors) {
       const w = d.maxX - d.minX, depth = d.maxZ - d.minZ;
       const alongX = w >= depth;
@@ -390,10 +400,10 @@ export class Level {
   }
 }
 
-function inheritPreset(rows, x, z) {
+function inheritPreset(rows, x, z, presets) {
   for (const [dx, dz] of DIRS) {
     const c = rows[z + dz]?.[x + dx];
-    if (c && PRESETS[c] && !PRESETS[c].solid && !PRESETS[c].door) return c;
+    if (c && presets[c] && !presets[c].solid && !presets[c].door) return c;
   }
   return '.';
 }

@@ -5,17 +5,10 @@ import { ITEMS } from './items.js';
 const WALL = '#e0582a';
 const STEP = 'rgba(255, 190, 120, .45)';
 const LAVA = 'rgba(255, 115, 20, .8)';
-const DOOR = { plain: '#40c0ff', red: '#ff3020', boss: '#c060ff' };
+const SLIME = 'rgba(90, 230, 60, .75)';
+const DOOR = { plain: '#c8d0d8', red: '#ff3020', blue: '#3a78ff', yellow: '#ffc830', boss: '#c060ff' };
+const DOOR_LABEL = { plain: 'Door', red: 'Red door', blue: 'Blue door', yellow: 'Yellow door', boss: 'Sealed door' };
 const EXIT = '#40ffb0';
-const LEGEND = [
-  ['You', '#fff2c0'],
-  ['Wall', WALL],
-  ['Door', DOOR.plain],
-  ['Red door', DOOR.red],
-  ['Sealed door', DOOR.boss],
-  ['Lava', LAVA],
-  ['Exit', EXIT],
-];
 const LAYER_RES = 12; // pixels per metre in the cached minimap layer
 const MINI_SCALE = 6.5; // CSS pixels per metre on the minimap
 
@@ -24,19 +17,9 @@ const hex = (n) => `#${n.toString(16).padStart(6, '0')}`;
 export class Automap {
   constructor(game) {
     this.game = game;
-    const L = game.level;
-    this.seen = new Uint8Array(L.w * L.h);
-    // Floor colour per cell, worked out once: lava, open sky, or shaded by height.
-    this.style = L.cells.map((c) => {
-      if (c.lava) return LAVA;
-      const k = Math.max(0, Math.min(1, c.floor / 2.4)), b = c.sky ? [58, 26, 20] : [40, 30, 26];
-      return `rgba(${b[0] + 50 * k | 0}, ${b[1] + 40 * k | 0}, ${b[2] + 30 * k | 0}, .9)`;
-    });
     // Explored cells are painted into this canvas only when they change; the
     // minimap just draws it rotated each frame.
     this.layer = document.createElement('canvas');
-    this.layer.width = L.w * LAYER_RES;
-    this.layer.height = L.h * LAYER_RES;
     this.hud = document.getElementById('hud');
     this.mini = document.createElement('canvas');
     this.mini.id = 'minimap';
@@ -52,6 +35,26 @@ export class Automap {
     this.dirty = true;
     this.doorKey = '';
     addEventListener('resize', () => { this.miniCss = 0; });
+  }
+
+  // Size everything for a new level and work out its floor colours and legend.
+  setLevel(L) {
+    this.seen = new Uint8Array(L.w * L.h);
+    this.style = L.cells.map((c) => {
+      if (c.lava) return c.slime ? SLIME : LAVA;
+      const k = Math.max(0, Math.min(1, c.floor / 2.4)), b = c.sky ? [58, 26, 20] : [40, 30, 26];
+      return `rgba(${b[0] + 50 * k | 0}, ${b[1] + 40 * k | 0}, ${b[2] + 30 * k | 0}, .9)`;
+    });
+    this.layer.width = L.w * LAYER_RES;
+    this.layer.height = L.h * LAYER_RES;
+    const doors = new Set(L.doors.map((d) => d.type));
+    this.legend = [['You', '#fff2c0'], ['Wall', WALL]];
+    for (const type of Object.keys(DOOR)) if (doors.has(type)) this.legend.push([DOOR_LABEL[type], DOOR[type]]);
+    if (L.cells.some((c) => c.lava && !c.slime)) this.legend.push(['Lava', LAVA]);
+    if (L.cells.some((c) => c.slime)) this.legend.push(['Slime', SLIME]);
+    this.legend.push(['Exit', EXIT]);
+    this.doorKey = '';
+    this.reset();
   }
 
   reset() {
@@ -195,9 +198,10 @@ export class Automap {
     ctx.font = `600 ${13 * r}px Inter, system-ui, sans-serif`;
     ctx.textBaseline = 'middle';
     const y = H - 30 * r, gap = 22 * r;
-    const widths = LEGEND.map(([label]) => 16 * r + ctx.measureText(label).width);
-    let x = (W - widths.reduce((a, b) => a + b, 0) - gap * (LEGEND.length - 1)) / 2;
-    LEGEND.forEach(([label, color], i) => {
+    const legend = this.legend;
+    const widths = legend.map(([label]) => 16 * r + ctx.measureText(label).width);
+    let x = (W - widths.reduce((a, b) => a + b, 0) - gap * (legend.length - 1)) / 2;
+    legend.forEach(([label, color], i) => {
       ctx.fillStyle = color;
       ctx.fillRect(x, y - 5 * r, 10 * r, 10 * r);
       ctx.fillStyle = 'rgba(243, 236, 230, .8)';
@@ -211,7 +215,7 @@ export class Automap {
   drawCells(ctx, s) {
     const L = this.game.level, seen = this.seen, w = L.w;
     const floors = new Map(), walls = new Path2D(), steps = new Path2D();
-    const doors = { plain: new Path2D(), red: new Path2D(), boss: new Path2D() };
+    const doors = Object.fromEntries(Object.keys(DOOR).map((type) => [type, new Path2D()]));
     let c = null, i = 0;
     const edge = (n, ax, az, bx, bz) => {
       if (n.solid) {
