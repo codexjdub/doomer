@@ -13,6 +13,13 @@ const MAT = {
   knuckle: { c: [.26, .17, .1], spec: .2, shin: 6 },
   sleeve: { c: [.17, .22, .11], spec: .1, shin: 4 },
   pad: { c: [.24, .31, .16], spec: .2, shin: 8 },
+  blued: { c: [.13, .15, .19], spec: 1, shin: 30 },
+  barrel: { c: [.3, .32, .36], spec: .55, shin: 22 },
+  hole: { c: [.012, .012, .012], spec: 0, shin: 1 },
+  grip: { c: [.3, .17, .08], spec: .3, shin: 10 },
+  olive: { c: [.2, .23, .11], spec: .25, shin: 8 },
+  oliveLight: { c: [.29, .32, .15], spec: .25, shin: 8 },
+  brass: { c: [.55, .4, .12], spec: 1, shin: 20 },
 };
 const NEAR = .06;
 const OUTLINE = 0x2000000 | 0x0a0808;
@@ -90,20 +97,30 @@ function hand(g, m, w = .1, fingers = 4, armRx = -.9, armRz = 0) {
   g.cyl(at(arm, 0, -.02, 0), .07, .05, 'pad', 10);
 }
 
+// A service pistol held in both hands: blued slide with a polished top,
+// grooves, sights and ejection port over a polymer frame with wood panels.
 function pistol(root, { slide = 0 }) {
-  const g = new Model(), r = mul(root, scaleM(.85));
-  const s = at(r, 0, 0, -.13 + slide);
-  g.box(s, .07, .085, .34, 'dark');
-  g.box(at(s, 0, .043, 0), .05, .004, .32, 'steel');
-  g.box(at(s, .036, .01, .05), .002, .03, .2, 'steel');
-  for (let i = 0; i < 5; i++) g.box(at(s, 0, 0, .1 + i * .014), .074, .06, .008, 'dark');
-  g.box(at(r, 0, .052, -.285 + slide), .012, .02, .02, 'dark');
-  g.box(at(r, 0, .052, .02 + slide), .04, .02, .02, 'dark');
-  g.box(at(r, 0, -.06, -.12), .066, .05, .3, 'polymer');
-  g.cyl(at(r, 0, -.005, -.31, Math.PI / 2), .016, .04, 'dark', 8);
-  g.box(at(r, 0, -.14, .02, .28), .062, .17, .085, 'polymer');
-  hand(g, at(r, 0, -.13, .03, .28), .09, 3, -1.1, .2);
-  return { model: g, muzzle: [0, -.005 * .85, -.34 * .85] };
+  const g = new Model(), r = root;
+  const s = at(r, 0, .02, -.12 + slide);
+  g.box(s, .062, .072, .32, 'blued');
+  g.box(at(s, 0, .037, 0), .042, .004, .3, 'steel');
+  g.box(at(s, .032, .016, -.03), .003, .014, .045, 'hole');
+  for (let i = 0; i < 6; i++) for (const x of [-.0315, .0315]) g.box(at(s, x, 0, .095 + i * .011), .002, .05, .004, 'hole');
+  g.box(at(s, 0, .046, -.15), .008, .014, .014, 'steel');
+  for (const x of [-.014, .014]) g.box(at(s, x, .045, .14), .01, .012, .012, 'steel');
+  g.cyl(at(s, 0, -.008, -.165, Math.PI / 2), .014, .02, 'steel', 10);
+  g.cyl(at(s, 0, -.008, -.176, Math.PI / 2), .009, .004, 'hole', 10);
+  g.box(at(r, 0, -.035, -.1), .056, .04, .26, 'polymer');
+  g.box(at(r, 0, -.085, -.07), .012, .008, .07, 'polymer');
+  g.box(at(r, 0, -.07, -.105), .012, .035, .008, 'polymer');
+  g.box(at(r, 0, -.065, -.055), .006, .03, .006, 'steel');
+  const gr = at(r, 0, -.12, .03, .3);
+  g.box(gr, .054, .16, .075, 'polymer');
+  for (const x of [-.028, .028]) g.box(at(gr, x, -.005, 0), .004, .13, .06, 'grip');
+  // Right hand on the grip, left hand cupped under it from the side.
+  hand(g, at(r, .004, -.12, .036, .3), .085, 3, -1.15, .25);
+  hand(g, at(r, -.05, -.15, .02, .35, 0, -.5), .08, 4, -1.2, -.55);
+  return { model: g, muzzle: [0, .012, -.3 + 0] };
 }
 
 function shotgun(root, { pump = 0 }) {
@@ -122,27 +139,34 @@ function shotgun(root, { pump = 0 }) {
   return { model: g, muzzle: [0, 0, -.86] };
 }
 
+// A six-barrel chaingun: the barrel cluster rides above a slim blued
+// receiver, held by clamps and a muzzle plate, with a carry handle on top,
+// an olive ammo box on the left and both hands on its grips.
 function chaingun(root, { spin = 0 }) {
-  const g = new Model(), b = at(root, 0, 0, -.38);
-  for (let i = 0; i < 6; i++) {
-    const a = i / 6 * Math.PI * 2 + spin;
-    g.cyl(at(b, Math.cos(a) * .05, Math.sin(a) * .05, -.1, Math.PI / 2), .018, .62, 'steel', 8);
-  }
-  g.cyl(at(b, 0, 0, -.36, Math.PI / 2), .075, .04, 'dark', 16);
-  g.cyl(at(b, 0, 0, .05, Math.PI / 2), .075, .04, 'dark', 16);
-  g.cyl(at(root, 0, 0, .02, Math.PI / 2), .1, .34, 'dark', 16);
-  g.box(at(root, 0, -.07, .05), .16, .12, .26, 'polymer');
-  g.box(at(root, 0, -.18, .12, .3), .06, .18, .08, 'polymer');
-  g.box(at(root, 0, .1, -.12), .025, .04, .1, 'steel');
-  g.box(at(root, .1, -.06, .04), .05, .12, .1, 'dark');
-  hand(g, at(root, 0, -.2, .12, .3), .09, 3, -1.1, .2);
-  hand(g, at(root, -.15, -.05, -.12, 0, 0, -.3), .1, 4, -1.4, -.6);
-  return { model: g, muzzle: [0, 0, -.8] };
+  const g = new Model(), b = at(root, 0, .045, -.3);
+  const ring = (k) => [Math.cos(k / 6 * Math.PI * 2 + spin) * .042, Math.sin(k / 6 * Math.PI * 2 + spin) * .042];
+  for (let i = 0; i < 6; i++) g.cyl(at(b, ...ring(i), -.12, Math.PI / 2), .014, .62, 'barrel', 10);
+  for (const z of [-.4, -.18, .06]) g.cyl(at(b, 0, 0, z, Math.PI / 2), .062, .026, 'dark', 18);
+  g.cyl(at(b, 0, 0, -.44, Math.PI / 2), .058, .012, 'dark', 18);
+  for (let i = 0; i < 6; i++) g.cyl(at(b, ...ring(i), -.448, Math.PI / 2), .008, .004, 'hole', 8);
+  g.cyl(at(b, 0, 0, -.12, Math.PI / 2), .018, .64, 'dark', 8);
+  g.box(at(root, 0, -.035, .02), .1, .07, .3, 'blued');
+  g.box(at(root, 0, .0, .02), .08, .02, .28, 'steel');
+  g.box(at(root, 0, .13, -.02), .018, .018, .2, 'steel');
+  for (const z of [-.1, .06]) g.box(at(root, 0, .105, z), .014, .05, .014, 'steel');
+  g.box(at(root, -.1, -.06, .05), .07, .1, .13, 'olive');
+  g.box(at(root, -.1, -.005, .05), .074, .012, .134, 'oliveLight');
+  for (let i = 0; i < 4; i++) g.box(at(root, -.062 + i * .011, -.02, .02), .009, .02, .026, 'brass');
+  g.box(at(root, 0, -.14, .12, .3), .05, .14, .07, 'polymer');
+  g.box(at(root, .0, -.09, -.12, .15), .04, .09, .045, 'polymer');
+  hand(g, at(root, .004, -.14, .125, .3), .08, 3, -1.15, .25);
+  hand(g, at(root, .0, -.1, -.12, .15, 0, -.1), .075, 4, -1.3, -.45);
+  return { model: g, muzzle: [0, .045, -.75] };
 }
 
 // Where each gun rests in camera space: right of centre, turned in so its
-// side shows.
-const REST = [[.09, -.15, -.4, .2], [.11, -.21, -.34, .17], [.12, -.25, -.46, .15]];
+// side shows, tipped slightly nose-down: [x, y, z, yaw, tilt, roll].
+const REST = [[.09, -.135, -.4, .22, -.06, -.06], [.11, -.21, -.34, .17], [.11, -.2, -.46, .2, -.08, -.05]];
 const BUILD = [pistol, shotgun, chaingun];
 const FRAMES = [
   { idle: {}, back: { slide: .05 } },
@@ -155,7 +179,7 @@ const FRAMES = [
 export function bakeGuns(W, VH) {
   const F = (VH / 2) / Math.tan(FOV / 2);
   return BUILD.map((build, gi) => {
-    const [rx, ry, rz, yaw] = REST[gi], root = mul(translate(rx, ry, rz), eulerXYZ(.05, yaw, -.06));
+    const [rx, ry, rz, yaw, tilt = .05, roll = -.06] = REST[gi], root = mul(translate(rx, ry, rz), eulerXYZ(tilt, yaw, roll));
     const frames = {};
     let muzzle = null;
     for (const [name, opts] of Object.entries(FRAMES[gi])) {
@@ -190,7 +214,7 @@ export function bakeGuns(W, VH) {
         tris.push(a, b, c);
       }
       const { zb, cb } = rasterize(v, 7, px, py, tris, w * SS, h * SS);
-      frames[name] = { w, h, data: outline(shrink(zb, cb, w, h, w * SS, [0, 0, 0]), w, h), ox, oy, ppm: 1, ax: 0, ay: 0 };
+      frames[name] = { w, h, data: outline(bevel(shrink(zb, cb, w, h, w * SS, [0, 0, 0]), zb, w, h), w, h), ox, oy, ppm: 1, ax: 0, ay: 0 };
       if (!muzzle) {
         const m = mul(root, translate(...mz));
         muzzle = [m[3] / -m[11] * F, -m[7] / -m[11] * F];
@@ -200,6 +224,28 @@ export function bakeGuns(W, VH) {
     frames.flash = flashSprite(size);
     return { frames, muzzle };
   });
+}
+
+// Pixel-art bevels: where a part's top edge stands in front of something
+// farther away (or nothing), light that pixel; shade its bottom edge.
+function bevel(data, zb, w, h) {
+  const out = data.slice(), sw = w * SS, m = SS >> 1;
+  const depth = (x, y) => (x < 0 || y < 0 || x >= w || y >= h ? -1e9 : zb[(y * SS + m) * sw + x * SS + m]);
+  const scale = (p, k) => {
+    const r = Math.min(255, (p & 255) * k + 6 * (k > 1)), g = Math.min(255, ((p >> 8) & 255) * k + 6 * (k > 1)), b = Math.min(255, ((p >> 16) & 255) * k + 6 * (k > 1));
+    return (p & 0xff000000) | (b << 16) | (g << 8) | r;
+  };
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const p = data[y * w + x];
+      if (!p) continue;
+      const z = depth(x, y);
+      if (depth(x, y - 1) < z - .012) out[y * w + x] = scale(p, 1.55);
+      else if (depth(x - 1, y) < z - .012) out[y * w + x] = scale(p, 1.25);
+      else if (depth(x, y + 1) < z - .012) out[y * w + x] = scale(p, .6);
+    }
+  }
+  return out;
 }
 
 // A one-pixel dark outline around the gun, so it reads against any wall.
