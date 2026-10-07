@@ -3,7 +3,7 @@
 // side, back three-quarter, back; the other three angles are mirror images)
 // for every frame of every animation, the way Doom's sprites were made from
 // models. The game then just picks a picture.
-import { monsterRig } from './monsters.js';
+import { monsterRig, rigSteps } from './monsters.js';
 import { OPAQUE, BRIGHT } from './renderer.js';
 import { byte } from './textures.js';
 import { norm, lerp } from './vec.js';
@@ -349,18 +349,73 @@ export { SS, mul, eulerXYZ, translate, scaleM };
 
 // ---------------------------------------------------------------- lookup
 
-const sheets = {};
+const sheets = {}, baking = {};
 
-// Bake every frame of a monster type: { anim: [frame][view] }, plus death.
-export function bakeMonster(type) {
-  if (sheets[type]) return sheets[type];
+// Bake a monster type a step at a time: mesh each part, then draw each
+// picture. Returns the sheet: { anim: [frame][view] }, plus death.
+function* bakeSteps(type) {
+  yield* rigSteps(type);
   const sheet = {};
   for (const [anim, poses] of Object.entries(ANIMS[type])) {
-    sheet[anim] = poses.map((P) => Array.from({ length: VIEWS }, (_, v) => bakeFrame(type, P, v * Math.PI / 4)));
+    sheet[anim] = [];
+    for (const P of poses) {
+      const views = [];
+      for (let v = 0; v < VIEWS; v++) {
+        views.push(bakeFrame(type, P, v * Math.PI / 4));
+        yield;
+      }
+      sheet[anim].push(views);
+    }
   }
-  if (type !== 'skull') sheet.death = DEATH.map((tilt) => [bakeFrame(type, painPose(), 0, tilt)]);
-  sheets[type] = sheet;
+  if (type !== 'skull') {
+    sheet.death = [];
+    for (const tilt of DEATH) {
+      sheet.death.push([bakeFrame(type, painPose(), 0, tilt)]);
+      yield;
+    }
+  }
   return sheet;
+}
+
+// Carry a type's bake on for about `budget` ms; the sheet once it is done.
+function advance(type, budget) {
+  if (sheets[type]) return sheets[type];
+  const it = baking[type] || (baking[type] = bakeSteps(type));
+  const t0 = performance.now();
+  for (;;) {
+    const r = it.next();
+    if (r.done) {
+      delete baking[type];
+      return (sheets[type] = r.value);
+    }
+    if (performance.now() - t0 > budget) return null;
+  }
+}
+
+// Bake every frame of a monster type now, finishing a bake under way.
+export function bakeMonster(type) {
+  return advance(type, Infinity);
+}
+
+// Let the page draw and handle input before carrying on. Unlike timers,
+// messages aren't slowed down in background tabs.
+export function nextTask() {
+  return new Promise((resolve) => {
+    const ch = new MessageChannel();
+    ch.port1.onmessage = () => resolve();
+    ch.port2.postMessage(0);
+  });
+}
+
+// Bake in short slices; `between` resolves when the next slice may run.
+export async function bakeMonsterSoon(type, between = nextTask) {
+  while (!advance(type, 8)) await between();
+  return sheets[type];
+}
+
+// Use a sheet baked earlier (saved in the browser).
+export function addSheet(type, sheet) {
+  sheets[type] = sheet;
 }
 
 // Pick the picture for a monster seen from angle `rel` (camera direction

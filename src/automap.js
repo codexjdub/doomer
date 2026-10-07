@@ -137,7 +137,7 @@ export class Automap {
   }
 
   refreshLayer() {
-    const doors = this.game.level.doors.map((d) => (d.pos < d.height - .2 ? 1 : 0)).join('');
+    const doors = this.game.level.doors.map((d) => (d.pos < d.height - .2 ? 1 : 0) + (d.target ? 2 : 0)).join('');
     if (!this.dirty && doors === this.doorKey) return;
     this.dirty = false;
     this.doorKey = doors;
@@ -214,11 +214,13 @@ export class Automap {
   // walls and closed doors. The context is scaled so one unit is one metre.
   drawCells(ctx, s) {
     const L = this.game.level, seen = this.seen, w = L.w;
+    // A secret wall stays a wall on the map until it has been found.
+    const wall = (n) => n.solid || (n.door?.type === 'secret' && !n.door.target);
     const floors = new Map(), walls = new Path2D(), steps = new Path2D();
     const doors = Object.fromEntries(Object.keys(DOOR).map((type) => [type, new Path2D()]));
     let c = null, i = 0;
     const edge = (n, ax, az, bx, bz) => {
-      if (n.solid) {
+      if (wall(n)) {
         walls.moveTo(ax, az);
         walls.lineTo(bx, bz);
         return;
@@ -234,11 +236,11 @@ export class Automap {
     for (i = 0; i < seen.length; i++) {
       if (!seen[i]) continue;
       c = L.cells[i];
-      if (c.solid) continue;
+      if (wall(c)) continue;
       let floor = floors.get(this.style[i]);
       if (!floor) floors.set(this.style[i], (floor = new Path2D()));
       floor.rect(c.x - .01, c.z - .01, 1.02, 1.02);
-      if (c.door && c.door.pos < c.door.height - .2) doors[c.door.type].rect(c.x + .1, c.z + .1, .8, .8);
+      if (c.door && c.door.pos < c.door.height - .2 && doors[c.door.type]) doors[c.door.type].rect(c.x + .1, c.z + .1, .8, .8);
       L.forEachEdge(c.x, c.z, edge);
     }
     for (const [style, path] of floors) {

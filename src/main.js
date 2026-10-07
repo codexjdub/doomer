@@ -6,8 +6,8 @@ import { Particles, Gibs, Blasts, Lights } from './effects.js';
 import { Sound } from './audio.js';
 import { Music } from './music.js';
 import { Enemy, Projectile, rayCylinder } from './enemies.js';
-import { MONSTER_TYPES } from './monsters.js';
-import { bakeMonster, monsterSprite } from './sprites.js';
+import { bakeMonster, bakeMonsterSoon, addSheet, monsterSprite, nextTask } from './sprites.js';
+import { loadSheets, saveSheet } from './spritecache.js';
 import { gibSprites, explosionSprites, fireballSprites, skullFlameSprites } from './art.js';
 import { Arsenal } from './weapons.js';
 import { Item, ITEMS, MAX, Lamp, Torch, ExitPad } from './items.js';
@@ -15,7 +15,7 @@ import { Player } from './player.js';
 import { Hud } from './hud.js';
 import { Input } from './input.js';
 import { Automap } from './automap.js';
-import { Vec3, randInt } from './vec.js';
+import { Vec3, randInt, clamp } from './vec.js';
 
 // Menus stay light: the title flythrough draws at 30 fps, the pause, death
 // and win screens hold their last frame, and nothing draws once the window
@@ -28,12 +28,22 @@ const QUIET_MS = 3000;
 
 const SETTINGS_KEY = 'doomer.settings';
 const PROGRESS_KEY = 'doomer.progress';
-const DEFAULTS = { pixels: 1, sensitivity: 1, volume: .7, music: .5, minimap: true };
+const DEFAULTS = { pixels: 1, sensitivity: 1, volume: .7, music: .5, minimap: true, skill: 'normal' };
+
+// Difficulty, applied when a level starts. damage scales what the player
+// takes, ammo what pickups give; every `thin`th monster stays away; attack
+// speeds up monsters' cooldowns and missile their fireballs.
+const SKILLS = {
+  easy: { label: 'Easy', damage: .5, ammo: 2, thin: 4, attack: 1, missile: 1, note: 'You take half damage, ammo counts double, and fewer monsters show up.' },
+  normal: { label: 'Normal', damage: 1, ammo: 1, thin: 0, attack: 1, missile: 1, note: 'Monsters as intended. Ammo and health as placed.' },
+  hard: { label: 'Hard', damage: 1.5, ammo: 1, thin: 0, attack: 1.3, missile: 1.2, note: 'You take 1.5× damage. Monsters attack more often and throw faster.' },
+};
 
 function loadSettings() {
   try {
     const s = { ...DEFAULTS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') };
     if (s.pixels !== 1 && s.pixels !== 2) s.pixels = 1;
+    if (!SKILLS[s.skill]) s.skill = DEFAULTS.skill;
     return s;
   } catch {
     return { ...DEFAULTS };
@@ -56,8 +66,11 @@ const HAZARD = {
 };
 
 const fmtTime = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
-// Let the page repaint between slow loading steps.
-const breathe = () => new Promise((r) => setTimeout(r, 16));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Monster characters in the level layouts, and the types they spawn.
+const MONSTERS = { I: 'imp', Z: 'brute', O: 'skull', W: 'boss' };
+const monstersIn = (rows) => [...new Set([...rows.join('')].map((ch) => MONSTERS[ch]).filter(Boolean))];
 
 class Game {
   constructor() {
@@ -105,13 +118,16 @@ class Game {
     addEventListener('blur', () => { this.lastInput = -Infinity; });
   }
 
-  // Bake the monster sprites (a few seconds), then show the title screen
-  // over the first level.
+  // Show the title over the first level as soon as its monsters are ready:
+  // from the browser's saved copy, or baked now. The rest bake afterwards.
   async init() {
-    for (let i = 0; i < MONSTER_TYPES.length; i++) {
-      this.hud.loading(i / MONSTER_TYPES.length);
-      await breathe();
-      bakeMonster(MONSTER_TYPES[i]);
+    const all = [...new Set(LEVELS.flatMap((def) => monstersIn(def.build())))];
+    const saved = await loadSheets(all);
+    for (const [type, sheet] of Object.entries(saved)) addSheet(type, sheet);
+    const first = monstersIn(LEVELS[0].build());
+    for (let i = 0; i < first.length; i++) {
+      this.hud.loading(i / first.length);
+      await bakeMonsterSoon(first[i]);
     }
     this.gibs = new Gibs(gibSprites());
     this.blasts = new Blasts(explosionSprites());
@@ -124,16 +140,34 @@ class Game {
     this.hud.showScreen('title');
     this.hud.ready();
     this.hud.buildLevels(LEVELS, this.progress.unlocked);
+    this.hud.buildSkills(SKILLS, this.settings.skill);
+    this.bakeRest(all, saved);
+  }
+
+  // Bake the remaining monsters in small slices, in the order the levels
+  // need them, pausing while a level is being played. Each one is saved for
+  // the next visit.
+  async bakeRest(types, saved) {
+    const between = async () => {
+      await nextTask();
+      while (this.state === 'playing' || this.state === 'dying') await sleep(250);
+    };
+    for (const type of types) {
+      if (saved[type]) continue;
+      saveSheet(type, await bakeMonsterSoon(type, between));
+    }
   }
 
   // Swap in a level: build its cells and props, bake its lighting, then
   // spawn everything. `loadout` is what the player carries in.
   loadLevel(index, loadout = null) {
-    const def = LEVELS[index], t = def.theme;
+    const def = LEVELS[index], t = def.theme, rows = def.build();
+    // Finish any monster the background baking hasn't reached yet.
+    for (const type of monstersIn(rows)) bakeMonster(type);
     this.lights.clear();
     this.levelIndex = index;
     this.def = def;
-    this.level = new Level(def.build(), def.presets);
+    this.level = new Level(rows, def.presets);
     this.gibs.level = this.level;
     this.renderer.setLevel(this.level, t);
 
@@ -200,6 +234,7 @@ class Game {
   // ------------------------------------------------------------ flow
 
   reset() {
+    this.skill = SKILLS[this.settings.skill];
     for (const e of this.enemies) e.dispose(this);
     for (const it of this.items) it.dispose(this);
     for (const p of this.projectiles) p.dispose(this);
@@ -216,11 +251,12 @@ class Game {
     this.dust.clear();
     this.level.resetDoors();
 
-    let spawn = { x: 2.5, y: 0, z: 2.5, yaw: 0 };
-    const MONSTERS = { I: 'imp', Z: 'brute', O: 'skull', W: 'boss' };
+    let spawn = { x: 2.5, y: 0, z: 2.5, yaw: 0 }, n = 0;
+    const thin = this.skill.thin;
     for (const e of this.level.entities) {
       if (e.type === '@') spawn = { x: e.x, y: e.y, z: e.z, yaw: 0 };
       else if (MONSTERS[e.type]) {
+        if (thin && e.type !== 'W' && ++n % thin === 0) continue;
         const m = new Enemy(this, MONSTERS[e.type], e.x, e.y, e.z);
         this.enemies.push(m);
         if (e.type === 'W') this.boss = m;
@@ -229,7 +265,8 @@ class Game {
     if (this.boss) this.boss.yaw = this.def.bossYaw ?? -Math.PI / 2;
     this.player.reset(spawn, this.startLoadout);
     this.arsenal.reset();
-    this.stats = { kills: 0, total: this.enemies.length, time: 0 };
+    this.stats = { kills: 0, total: this.enemies.length, time: 0, secrets: 0 };
+    this.found = new Set();
     this.flowTimer = 0;
     this.lockedMsgT = 0;
     this.deathT = 0;
@@ -260,12 +297,17 @@ class Game {
     }
   }
 
-  // Start a level from the title screen, carrying in its saved loadout.
+  // Start a level from the title screen, carrying in its saved loadout. The
+  // level behind the title is respawned rather than rebuilt, so the chosen
+  // difficulty applies.
   startLevel(index) {
     if (index >= this.progress.unlocked) return;
-    if (index !== this.levelIndex || this.stats.time > 0) this.loadLevel(index, this.progress.loadouts[index] || null);
-    else this.startLoadout = this.progress.loadouts[index] || null;
-    if (index === this.levelIndex && this.startLoadout) this.player.reset(this.spawn, this.startLoadout);
+    const loadout = this.progress.loadouts[index] || null;
+    if (index !== this.levelIndex) this.loadLevel(index, loadout);
+    else {
+      this.startLoadout = loadout;
+      this.reset();
+    }
     this.start();
   }
 
@@ -340,7 +382,8 @@ class Game {
 
   statsText() {
     const s = this.stats;
-    return `Time <b>${fmtTime(s.time)}</b><br>Kills <b>${s.kills} / ${s.total}</b>`;
+    return `Difficulty <b>${this.skill.label}</b><br>Time <b>${fmtTime(s.time)}</b><br>Kills <b>${s.kills} / ${s.total}</b>`
+      + (this.level.secrets ? `<br>Secrets <b>${s.secrets} / ${this.level.secrets}</b>` : '');
   }
 
   // ------------------------------------------------------------ main loop
@@ -384,6 +427,7 @@ class Game {
       this.level.updateFlow(p.pos.x, p.pos.z);
     }
     this.updateDoors(dt);
+    this.checkSecrets();
     for (const e of this.enemies) e.update(dt, this);
     this.projectiles = this.projectiles.filter((pr) => pr.update(dt, this));
     for (const it of this.items) it.update(dt);
@@ -538,6 +582,15 @@ class Game {
     this.lockedMsgT -= dt;
     for (const d of this.level.doors) {
       if (d.target > 0 || p.dead) continue;
+      if (d.type === 'secret') {
+        // Secret walls slide open after half a second of walking straight into
+        // them (within about 30°, so running along a wall doesn't open them).
+        const vx = clamp(p.pos.x, d.minX, d.maxX) - p.pos.x, vz = clamp(p.pos.z, d.minZ, d.maxZ) - p.pos.z, dist = Math.hypot(vx, vz);
+        const pushing = dist < p.radius + .1 && p.wishX * vx + p.wishZ * vz > .85 * dist;
+        d.push = pushing ? d.push + dt : 0;
+        if (d.push >= .5) d.target = d.height;
+        continue;
+      }
       const dx = Math.max(d.minX - p.pos.x, 0, p.pos.x - d.maxX);
       const dz = Math.max(d.minZ - p.pos.z, 0, p.pos.z - d.maxZ);
       if (Math.hypot(dx, dz) > 1.6) continue;
@@ -552,6 +605,16 @@ class Game {
       d.target = d.height;
     }
     this.level.updateDoors(dt, (d) => this.sound.play('door', { x: d.cx, z: d.cz }));
+  }
+
+  // Stepping into a secret area for the first time counts it.
+  checkSecrets() {
+    const p = this.player, area = this.level.at(p.pos.x, p.pos.z).secretArea ?? -1;
+    if (area < 0 || p.dead || this.found.has(area)) return;
+    this.found.add(area);
+    this.stats.secrets++;
+    this.hud.message('You found a secret area!');
+    this.sound.play('secret');
   }
 
   locked(door, text) {
@@ -585,13 +648,13 @@ class Game {
         break;
       case 'ammo':
         if (p.ammo[d.ammo] >= MAX[d.ammo]) return false;
-        p.ammo[d.ammo] = Math.min(MAX[d.ammo], p.ammo[d.ammo] + d.amount);
+        p.ammo[d.ammo] = Math.min(MAX[d.ammo], p.ammo[d.ammo] + d.amount * this.skill.ammo);
         break;
       case 'weapon': {
         const had = p.owned[d.weapon];
         if (had && p.ammo[d.ammo] >= MAX[d.ammo]) return false;
         p.owned[d.weapon] = true;
-        p.ammo[d.ammo] = Math.min(MAX[d.ammo], p.ammo[d.ammo] + d.amount);
+        p.ammo[d.ammo] = Math.min(MAX[d.ammo], p.ammo[d.ammo] + d.amount * this.skill.ammo);
         if (!had) this.arsenal.select(d.weapon);
         break;
       }
@@ -651,7 +714,7 @@ class Game {
   }
 
   spawnProjectile(origin, dir, speed, damage, owner, big) {
-    this.projectiles.push(new Projectile(this, origin, dir, speed, damage, owner, big));
+    this.projectiles.push(new Projectile(this, origin, dir, speed * this.skill.missile, damage, owner, big));
   }
 
   onEnemyDeath(e) {

@@ -37,6 +37,7 @@ export class Player {
     this.lavaTimer = 0;
     this.hurtSoundT = 0;
     this.inLava = false;
+    this.wishX = this.wishZ = 0;
   }
 
   eye() {
@@ -45,6 +46,7 @@ export class Player {
 
   hurt(amount, from, g) {
     if (this.dead || g.state !== 'playing') return;
+    amount = Math.max(1, Math.round(amount * g.skill.damage));
     const saved = Math.min(this.armor, Math.floor(amount / 3));
     this.armor -= saved;
     this.health -= amount - saved;
@@ -95,6 +97,9 @@ export class Player {
       wx /= wl;
       wz /= wl;
     }
+    // Where the player is trying to go, for pushing secret walls.
+    this.wishX = wx;
+    this.wishZ = wz;
     const speed = 7.6, accel = this.grounded ? 11 : 2.2;
     const k = Math.min(1, accel * dt);
     this.vel.x += (wx * speed - this.vel.x) * k;

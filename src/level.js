@@ -8,6 +8,10 @@ import { Vec3 } from './vec.js';
 // lower neighbours.
 const room = (floor, ceil, ftex, ctex, side, extra = {}) => ({ floor, ceil, ftex, ctex, side, ...extra });
 const sky = (floor, ftex, side = 'stone') => room(floor, 12, ftex, null, side, { sky: true });
+// A secret wall: a door wearing the texture of the wall it sits in, which
+// slides up when pushed. The rooms behind are marked `secret`.
+const secret = (wall, floor = 0) => room(floor, floor + 3.2, 'metalFloor', 'ceiling', 'panel', { door: 'secret', wall });
+const hidden = (floor = 0) => room(floor, floor + 3.2, 'metalFloor', 'ceiling', 'stone', { secret: true });
 
 export const PRESETS = {
   '#': { solid: true, wall: 'stone' },
@@ -51,10 +55,17 @@ export const PRESETS = {
   'B': room(0, 3.2, 'grate', 'ceiling', 'panel', { door: 'boss' }),
   '[': room(0, 3.2, 'grate', 'ceiling', 'panel', { door: 'blue' }),
   ']': room(0, 3.2, 'grate', 'ceiling', 'panel', { door: 'yellow' }),
+  // Secret walls in M, #, P, & and $ walls, and the floor of a secret area
+  '%': secret('panel'),
+  '^': secret('stone'),
+  '|': secret('pipes'),
+  '{': secret('flesh'),
+  '}': secret('bone'),
+  '!': hidden(),
 };
 
 // Helpers for level-specific presets in levels.js.
-export { room, sky };
+export { room, sky, secret, hidden };
 
 // @ player start   I imp   Z brute   O burning skull   W warlord (boss)
 // + health  H medkit  A armor  S shells  U bullets  G shotgun  C chaingun
@@ -93,6 +104,8 @@ export class Level {
           sky: !!p.sky,
           lava: !!p.lava,
           slime: !!p.slime,
+          secret: !!p.secret,
+          secretArea: -1,
           doorType: p.door || null,
           door: null,
         });
@@ -100,6 +113,7 @@ export class Level {
     }
     for (const e of this.entities) e.y = this.at(e.x, e.z).floor;
     this.groupDoors();
+    this.groupSecrets();
     this.dist = new Float32Array(this.w * this.h).fill(Infinity);
     this.queue = new Int32Array(this.w * this.h);
   }
@@ -129,6 +143,27 @@ export class Level {
       door.cz = (door.minZ + door.maxZ) / 2;
       door.height = door.ceil - door.floor;
       this.doors.push(door);
+    }
+  }
+
+  // Each connected patch of secret cells is one secret area; `secrets` is how
+  // many there are.
+  groupSecrets() {
+    this.secrets = 0;
+    for (const c of this.cells) {
+      if (!c.secret || c.secretArea >= 0) continue;
+      const area = this.secrets++, stack = [c];
+      c.secretArea = area;
+      while (stack.length) {
+        const d = stack.pop();
+        for (const [dx, dz] of DIRS) {
+          const n = this.cell(d.x + dx, d.z + dz);
+          if (n.secret && n.secretArea < 0) {
+            n.secretArea = area;
+            stack.push(n);
+          }
+        }
+      }
     }
   }
 
@@ -170,7 +205,7 @@ export class Level {
 
   resetDoors() {
     for (const d of this.doors) {
-      d.pos = d.target = 0;
+      d.pos = d.target = d.push = 0;
       d.moving = false;
     }
   }

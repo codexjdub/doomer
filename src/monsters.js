@@ -688,8 +688,9 @@ const RIGS = { imp: impRig, brute: bruteRig, boss: bossRig, skull: skullRig };
 
 const cache = {};
 
-// The rig for a monster type with every part meshed (cached).
-export function monsterRig(type) {
+// Mesh a monster type's parts one per step, so the baker can spread the work
+// over several frames. The finished rig is cached.
+export function* rigSteps(type) {
   if (cache[type]) return cache[type];
   const rig = RIGS[type]();
   rig.palette = Object.fromEntries(Object.entries(rig.palette).map(([k, v]) => [k, rgbOf(v)]));
@@ -699,9 +700,14 @@ export function monsterRig(type) {
     world[part.name] = [parent[0] + part.pivot[0], parent[1] + part.pivot[1], parent[2] + part.pivot[2]];
     part.world = world[part.name];
     part.mesh = buildPart(part, rig);
+    yield;
   }
   cache[type] = rig;
   return rig;
 }
 
-export const MONSTER_TYPES = Object.keys(RIGS);
+// The rig for a monster type with every part meshed (cached).
+export function monsterRig(type) {
+  if (!cache[type]) for (const _ of rigSteps(type));
+  return cache[type];
+}

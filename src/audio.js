@@ -288,6 +288,12 @@ export class Sound {
         this.tone(o, t + .1, .7, { freq: 1320, gain: .35 });
         break;
       }
+      case 'secret': {
+        // A low rising arpeggio when a secret area is found.
+        const o = this.out(null, vol * .55, .5);
+        [220, 277, 330, 440].forEach((f, i) => this.tone(o, t + i * .09, .7 - i * .1, { type: 'triangle', freq: f, gain: .35 }));
+        break;
+      }
       case 'door': {
         const o = this.out(pos, vol, .3);
         this.noise(o, t, 1.1, { type: 'lowpass', freq: 380, gain: .7, attack: .08 });

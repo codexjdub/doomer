@@ -67,6 +67,28 @@ export class Hud {
     if (!play.disabled) play.textContent = unlocked > 1 ? `Continue: ${levels[unlocked - 1].name}` : 'Click to play';
   }
 
+  // Difficulty picker on the title screen, with a line on what it changes.
+  buildSkills(skills, current) {
+    const box = $('#screen-title .skill');
+    box.innerHTML = '<div class="label">Difficulty</div><div class="row"></div><div class="note"></div>';
+    const row = box.querySelector('.row'), note = box.querySelector('.note');
+    const show = (key) => {
+      row.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.skill === key));
+      note.textContent = skills[key].note;
+    };
+    for (const [key, skill] of Object.entries(skills)) {
+      const b = document.createElement('button');
+      b.dataset.skill = key;
+      b.textContent = skill.label;
+      b.addEventListener('click', () => {
+        this.game.setSetting('skill', key);
+        show(key);
+      });
+      row.appendChild(b);
+    }
+    show(current);
+  }
+
   showWin(stats, name, next) {
     const w = this.screens.win;
     w.querySelector('[data-win-title]').textContent = next ? 'Level complete' : 'You beat Doomer';

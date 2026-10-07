@@ -119,7 +119,8 @@ export class Renderer {
         let sky = 0;
         for (const [ox, oz] of [[-1, -1], [0, -1], [-1, 0], [0, 0]]) {
           const c = L.cell(i + ox, j + oz);
-          if (L.blocked(c) && !c.door) continue;
+          // Doors are lit from both sides; secret walls like the walls they hide in.
+          if (L.blocked(c) && (!c.door || c.door.type === 'secret')) continue;
           if (c.sky) sky++;
           pts.push({ x: i + (ox ? -.3 : .3), y: c.floor + Math.min(1, (c.ceil - c.floor) * .5), z: j + (oz ? -.3 : .3) });
         }
@@ -333,11 +334,13 @@ export class Renderer {
         if (nc < cc && top < bot) {
           const lo = Math.max(nc, cf);
           if (nk & DOOR) {
-            // The wall above the doorway, then the door slab itself.
+            // The wall above the doorway, then the door slab itself. Secret
+            // doors wear the texture of the wall they hide in.
+            const door = this.doorAt[ni], secret = door.type === 'secret';
             const lintel = Math.max(lo, this.ceilH[ni]);
-            if (lintel < cc) this.wall(x, top, bot, cc, lintel, t1, this.sideT[ni], along, hx, hz, dim, null);
-            const door = this.doorAt[ni];
-            this.wall(x, top, bot, Math.min(cc, lintel), lo, t1, this.tex[DOOR_TEX[door.type]], along, hx, hz, dim, door, side);
+            if (lintel < cc) this.wall(x, top, bot, cc, lintel, t1, secret ? this.wallT[ni] : this.sideT[ni], along, hx, hz, dim, null);
+            if (secret) this.wall(x, top, bot, Math.min(cc, lintel), lo, t1, this.wallT[ni], along, hx, hz, dim, null, side, door);
+            else this.wall(x, top, bot, Math.min(cc, lintel), lo, t1, this.tex[DOOR_TEX[door.type]], along, hx, hz, dim, door, side);
           } else {
             this.wall(x, top, bot, cc, lo, t1, this.sideT[ni], along, hx, hz, dim, null);
           }
@@ -359,7 +362,8 @@ export class Renderer {
 
   // Draw a vertical face between heights lo..hi at distance t, clipped to the
   // open rows top..bot of column x. `side` is 1 when the face runs along x.
-  wall(x, top, bot, hi, lo, t, tex, along, hx, hz, dim, door, side = 0) {
+  // `door` maps a door texture onto the slab; `secret` is a secret door.
+  wall(x, top, bot, hi, lo, t, tex, along, hx, hz, dim, door, side = 0, secret = null) {
     const { W, F, HZ, ey } = this;
     const ys = Math.max(top, Math.ceil(HZ - (hi - ey) * F / t - .5)), ye = Math.min(bot, Math.ceil(HZ - (lo - ey) * F / t - .5));
     if (ys >= ye) return;
@@ -373,8 +377,11 @@ export class Renderer {
       v0 = (bottom + door.height - ey) * k;
       dv = k * t / F;
     } else {
-      u = ((along * TEXEL) | 0) & m;
-      v0 = -ey * TEXEL;
+      // A secret door's texture sits a few texels out of line with the wall
+      // around it (the tell; off every brick and panel size), and rises with it.
+      const su = secret ? 5 : 0, sv = secret ? secret.pos + 3 / TEXEL : 0;
+      u = ((along * TEXEL + su) | 0) & m;
+      v0 = (sv - ey) * TEXEL;
       dv = TEXEL * t / F;
     }
     for (let y = ys; y < ye; y++) {

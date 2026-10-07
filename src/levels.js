@@ -2,7 +2,7 @@
 // characters are cell presets (level.js PRESETS plus the level's own) or
 // entities (see ENTITY_CHARS in level.js). Coordinates are (x, z), with z
 // growing "south" down the grid.
-import { room, sky } from './level.js';
+import { room, sky, secret, hidden } from './level.js';
 
 function grid(w, h) {
   const g = Array.from({ length: h }, () => Array(w).fill('#'));
@@ -34,6 +34,8 @@ export const LEVELS = [
     theme: { fog: 0x0a0504, density: .028, hemi: [0x606880, 0x281810, .45], lamp: 0xffe0b8 },
     lights: [[30, 9, 10, HELL_SKY, 220, 24], [41, 9, 10, HELL_SKY, 220, 24], [35, 9, 19, HELL_SKY, 220, 24]],
     attract: { from: [11.5, 3.1, 21.5], to: [11.5, 2.6, 6] },
+    // A secret off the raised courtyard walkway.
+    presets: { '<': secret('stone', 1.6), '?': hidden(1.6) },
     build() {
       const m = grid(72, 46);
       // Start room, with a doorway north into the first corridor.
@@ -90,6 +92,12 @@ export const LEVELS = [
       // Exit room.
       m.fill(65, 31, 70, 39, 'M');
       m.fill(65, 32, 69, 38, 'E');
+      // Secrets: a store room behind the start room's west wall, and a
+      // weapons cache behind the courtyard's east walkway.
+      m.fill(1, 36, 3, 40, '!');
+      m.fill(4, 37, 4, 39, '%');
+      m.fill(47, 12, 51, 16, '?');
+      m.fill(46, 13, 46, 15, '<');
 
       m.put([[11, 41]], '@');
       m.put([[8, 36], [14, 36], [8, 40], [14, 40], [11, 27], [6, 21], [16, 21], [11, 14], [11, 6],
@@ -106,6 +114,11 @@ export const LEVELS = [
       m.put([[34, 38]], 'C');
       m.put([[33, 16]], 'K');
       m.put([[68, 35]], 'X');
+      // Secret loot: armor and bullets; an early chaingun.
+      m.put([[2, 38], [50, 15]], 'L');
+      m.put([[1, 37]], 'A');
+      m.put([[1, 39], [48, 13]], 'U');
+      m.put([[49, 14]], 'C');
       return m.rows();
     },
   },
@@ -166,6 +179,12 @@ export const LEVELS = [
       m.fill(37, 1, 51, 10, 'T');
       m.fill(38, 2, 50, 9, 'z');
       m.fill(43, 10, 45, 12, ',');
+      // Secrets: a closet east of the start room, and a room behind the
+      // pipes on the main hall's south wall.
+      m.fill(18, 37, 21, 41, '!');
+      m.fill(17, 38, 17, 40, '%');
+      m.fill(19, 29, 23, 32, '!');
+      m.fill(20, 28, 22, 28, '|');
 
       m.put([[10, 42]], '@');
       m.put([[7, 38], [13, 38], [8, 18], [18, 18], [26, 25], [16, 10], [38, 22], [44, 22], [50, 28], [43, 16], [41, 5], [47, 5]], 'L');
@@ -180,6 +199,12 @@ export const LEVELS = [
       m.put([[51, 29]], 'C');
       m.put([[51, 21]], 'J');
       m.put([[44, 4]], 'X');
+      // Secret loot: a medkit and shells; armor and bullets.
+      m.put([[20, 39], [21, 31]], 'L');
+      m.put([[19, 38]], 'H');
+      m.put([[19, 40]], 'S');
+      m.put([[20, 30]], 'A');
+      m.put([[22, 30]], 'U');
       return m.rows();
     },
   },
@@ -243,6 +268,12 @@ export const LEVELS = [
       m.fill(48, 15, 50, 18, ',');
       m.fill(47, 6, 53, 11, 's');
       m.fill(49, 8, 51, 9, 'T');
+      // Secrets: a room behind the start room's north wall, and one above
+      // the flesh lab, behind its north wall.
+      m.fill(4, 29, 8, 32, '!');
+      m.fill(5, 33, 7, 33, '%');
+      m.fill(31, 20, 35, 22, '!');
+      m.fill(32, 23, 34, 23, '{');
 
       m.put([[7, 40]], '@');
       m.put([[17, 28], [22, 28], [30, 29], [36, 29], [44, 30], [56, 30], [50, 21], [45, 8], [55, 8], [7, 37]], 'L');
@@ -256,6 +287,12 @@ export const LEVELS = [
       m.put([[43, 30], [11, 41]], '+');
       m.put([[50, 30]], 'V');
       m.put([[45, 4]], 'X');
+      // Secret loot: shells and a medkit; armor and bullets.
+      m.put([[6, 31], [33, 21]], 'L');
+      m.put([[5, 30]], 'S');
+      m.put([[7, 30]], 'H');
+      m.put([[31, 21]], 'A');
+      m.put([[35, 21]], 'U');
       return m.rows();
     },
   },
@@ -304,6 +341,12 @@ export const LEVELS = [
       m.fill(19, 2, 45, 14, 'z');
       m.fill(31, 15, 33, 15, 'R');
       for (const [x, z] of [[24, 5], [39, 5], [24, 10], [39, 10]]) m.fill(x, z, x + 1, z + 1, '$');
+      // Secrets: a room west of the start room, and a vault behind the
+      // fortress's east wall.
+      m.fill(21, 41, 24, 45, '!');
+      m.fill(25, 42, 25, 44, '%');
+      m.fill(47, 6, 51, 10, '!');
+      m.fill(46, 7, 46, 9, '}');
 
       m.put([[32, 45]], '@');
       m.put([[28, 42], [36, 42]], 'L');
@@ -318,6 +361,12 @@ export const LEVELS = [
       m.put([[4, 35]], 'H');
       m.put([[5, 32]], 'K');
       m.put([[32, 3]], 'X');
+      // Secret loot: a medkit and shells; armor and bullets.
+      m.put([[23, 43], [50, 8]], 'L');
+      m.put([[22, 42]], 'H');
+      m.put([[22, 44]], 'S');
+      m.put([[48, 7]], 'A');
+      m.put([[48, 9]], 'U');
       return m.rows();
     },
   },
@@ -361,6 +410,12 @@ export const LEVELS = [
       m.fill(23, 0, 33, 5, '$');
       m.fill(24, 1, 32, 4, 'y');
       m.fill(27, 5, 29, 5, 'B');
+      // Secrets: a room west of the start room, and one behind the east
+      // wall of the hall below the arena.
+      m.fill(18, 48, 22, 52, '!');
+      m.fill(23, 49, 23, 51, '}');
+      m.fill(42, 37, 46, 41, '!');
+      m.fill(41, 38, 41, 40, '}');
 
       m.put([[28, 52]], '@');
       m.put([[18, 36], [38, 36], [18, 42], [38, 42], [21, 15], [35, 15], [6, 7], [50, 7], [26, 50], [30, 50]], 'F');
@@ -375,6 +430,12 @@ export const LEVELS = [
       m.put([[28, 44], [16, 31], [40, 31]], 'U');
       m.put([[28, 40]], 'C');
       m.put([[28, 2]], 'X');
+      // Secret loot: shells and bullets; armor and a medkit for the Warlord.
+      m.put([[21, 50], [45, 39]], 'L');
+      m.put([[19, 49]], 'S');
+      m.put([[19, 51]], 'U');
+      m.put([[43, 38]], 'A');
+      m.put([[43, 40]], 'H');
       return m.rows();
     },
   },

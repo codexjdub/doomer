@@ -144,7 +144,7 @@ export class Enemy {
     }
 
     // chase
-    this.cooldown -= dt;
+    this.cooldown -= dt * g.skill.attack;
     const reach = T.reach + T.radius + p.radius;
     const level = Math.abs(p.pos.y - this.pos.y) < 1.5;
     if (this.cooldown <= 0 && !p.dead) {
@@ -321,7 +321,7 @@ export class Enemy {
       return;
     }
 
-    this.cooldown -= dt;
+    this.cooldown -= dt * g.skill.attack;
     this.retreat = Math.max(0, (this.retreat || 0) - dt);
     // Only two skulls wind up or charge at once; the rest circle and wait.
     const charging = g.enemies.filter((e) => e.def.fly && !e.dead && e.state === 'attack').length;
