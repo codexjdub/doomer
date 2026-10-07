@@ -33,7 +33,7 @@ Then open <http://localhost:8000>.
 | `src/renderer.js` | Software renderer: walls, floors, ceilings, sky and doors column by column, baked light maps, sprites and particles |
 | `src/levels.js` | The five levels: layouts drawn as rectangles on a grid, plus each level's theme |
 | `src/level.js` | Cell presets, collision, line of sight, pathfinding, doors |
-| `src/textures.js` | Procedural textures shrunk to pixel art, and the sky |
+| `src/textures.js` | Procedural textures shrunk to pixel art, the sky, and shared colour and noise helpers |
 | `src/monsters.js` | Sculpted monster models (distance fields meshed with surface nets) |
 | `src/sprites.js` | Bakes the monster models into pixel-art sprites from five angles for every animation frame |
 | `src/guns.js` | First-person gun models baked into pixel-art sprites |
@@ -48,7 +48,7 @@ Then open <http://localhost:8000>.
 | `src/music.js` | Adaptive soundtrack: explore, combat and boss layers synthesized live |
 | `src/automap.js` | Explored-area tracking, corner minimap and full-screen map |
 | `src/hud.js`, `src/input.js` | HUD, menus, settings, keyboard and mouse |
-| `src/vec.js` | A small 3D vector |
+| `src/vec.js` | A small 3D vector and shared number helpers |
 
 ## Editing levels
 

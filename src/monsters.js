@@ -3,6 +3,7 @@
 // painted with per-vertex colour, cavity shading and glowing veins. Claws,
 // spines and teeth are separate sharp cones. Parts are rigid and hang off
 // pivots; sprites.js poses them and bakes them into pixel-art sprites.
+import { rgbOf } from './textures.js';
 
 // ---------------------------------------------------------------- noise
 
@@ -321,7 +322,6 @@ function impRig() {
     palette: { skin: 0x1e0e0a, dark: 0x060202, bone: 0x5e5244, metal: 0x3a3c40, ash: 0x3a3230, flesh: 0x7a0e0a, blood: 0x2a0202, gum: 0x4a0a0a },
     ribs: true,
     wound: (x, y, z, part) => (part === 'head' || part === 'jaw' ? 0 : smooth(.4, .6, noise3(x * 4.5 + 11, y * 4.5, z * 4.5))),
-    glow: 0xff5a14,
     eyes: [4.5, .9, .12],
     veinFreq: 7,
     veinWidth: .07,
@@ -443,8 +443,6 @@ function bruteRig() {
   return {
     step: .024,
     palette: { skin: 0x2a1012, dark: 0x0a0203, bone: 0x8a7a5e, metal: 0x4a4d52, ash: 0x3a302e, flesh: 0x8a1410, blood: 0x2a0202, gum: 0x4a0a0a },
-    glow: 0xff2a08,
-    glowStrength: 2.2,
     eyes: [9, .5, .15],
     veinFreq: 6,
     veinWidth: .05,
@@ -569,7 +567,6 @@ function bossRig() {
     step: .016,
     palette: { skin: 0x140a08, dark: 0x050202, bone: 0x7a6e5c, metal: 0x3a3c42, ash: 0x3a3230, flesh: 0x7a0e0a, blood: 0x2a0202, gum: 0x4a0a0a },
     wound: (x, y, z, part) => (part === 'head' || part === 'jaw' ? 0 : smooth(.5, .68, noise3(x * 3 + 2, y * 3, z * 3))),
-    glow: 0xff4a0c,
     eyes: [7, 4, 1],
     veinFreq: 5.5,
     veinWidth: .065,
@@ -651,8 +648,6 @@ function skullRig() {
   return {
     step: .009,
     palette: { skin: 0xa89878, dark: 0x0a0604, bone: 0x6a5c4a, metal: 0x3a3c40, ash: 0x4a4038, flesh: 0x6a0c08, blood: 0x2a0202, gum: 0x3a0806 },
-    glow: 0xff6a10,
-    glowStrength: 4,
     eyes: [9, 3.2, .5],
     veinFreq: 9,
     veinWidth: .07,
@@ -692,13 +687,12 @@ const RIGS = { imp: impRig, brute: bruteRig, boss: bossRig, skull: skullRig };
 // ---------------------------------------------------------------- assembly
 
 const cache = {};
-const hexRgb = (hex) => [(hex >> 16 & 255) / 255, (hex >> 8 & 255) / 255, (hex & 255) / 255];
 
 // The rig for a monster type with every part meshed (cached).
 export function monsterRig(type) {
   if (cache[type]) return cache[type];
   const rig = RIGS[type]();
-  rig.palette = Object.fromEntries(Object.entries(rig.palette).map(([k, v]) => [k, hexRgb(v)]));
+  rig.palette = Object.fromEntries(Object.entries(rig.palette).map(([k, v]) => [k, rgbOf(v)]));
   const world = {};
   for (const part of rig.parts) {
     const parent = part.parent ? world[part.parent] : [0, 0, 0];

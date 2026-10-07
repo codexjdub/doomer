@@ -15,7 +15,7 @@ import { Player } from './player.js';
 import { Hud } from './hud.js';
 import { Input } from './input.js';
 import { Automap } from './automap.js';
-import { Vec3 } from './vec.js';
+import { Vec3, randInt } from './vec.js';
 
 // Menus stay light: the title flythrough draws at 30 fps, the pause, death
 // and win screens hold their last frame, and nothing draws once the window
@@ -23,6 +23,8 @@ import { Vec3 } from './vec.js';
 const MENU_FPS = 30;
 const IDLE_MS = 60000;
 const FROZEN = new Set(['paused', 'dead', 'won']);
+// The death and win screens let the sound play out, then go quiet.
+const QUIET_MS = 3000;
 
 const SETTINGS_KEY = 'doomer.settings';
 const PROGRESS_KEY = 'doomer.progress';
@@ -53,7 +55,6 @@ const HAZARD = {
   slime: { light: 0x50ff30, ember: [.8, 3, .4], damage: 5, every: .6 },
 };
 
-const randInt = ([a, b]) => a + Math.floor(Math.random() * (b - a + 1));
 const fmtTime = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 // Let the page repaint between slow loading steps.
 const breathe = () => new Promise((r) => setTimeout(r, 16));
@@ -70,6 +71,7 @@ class Game {
     this.fire = new Particles(2500, true);
     this.dust = new Particles(1500, false);
     this.flashes = [];
+    this.later = [];
 
     this.sound = new Sound();
     this.sound.setVolume(this.settings.volume);
@@ -115,6 +117,7 @@ class Game {
     this.blasts = new Blasts(explosionSprites());
     this.ballArt = { small: fireballSprites(false), big: fireballSprites(true) };
     this.flameArt = skullFlameSprites();
+    this.arsenal.bake(this.renderer);
     this.loadLevel(0);
     this.state = 'title';
     this.wake();
@@ -184,7 +187,10 @@ class Game {
     } catch {
       // Storage can be unavailable (private mode); settings just won't persist.
     }
-    if (key === 'pixels') this.renderer.setScale(value);
+    if (key === 'pixels') {
+      this.renderer.setScale(value);
+      this.arsenal.bake(this.renderer);
+    }
     if (key === 'volume') this.sound.setVolume(value);
     if (key === 'music') this.music.setVolume(value);
     if (key === 'minimap') this.automap.setMini(value);
@@ -202,6 +208,7 @@ class Game {
     this.items = [];
     this.projectiles = [];
     this.flashes = [];
+    this.later = [];
     this.boss = null;
     this.gibs.clear();
     this.blasts.clear();
@@ -304,6 +311,7 @@ class Game {
     this.state = 'won';
     this.music.setMode('explore');
     this.sound.play('exit');
+    this.quietSoon();
     this.input.unlock();
     const next = this.levelIndex + 1;
     if (next < LEVELS.length) {
@@ -313,6 +321,21 @@ class Game {
       this.hud.buildLevels(LEVELS, this.progress.unlocked);
     }
     this.hud.showWin(this.statsText(), this.def.name, next < LEVELS.length ? LEVELS[next].name : null);
+  }
+
+  // Suspend the sound a few seconds into the death or win screen, so an idle
+  // menu costs nothing; start() resumes it.
+  quietSoon() {
+    clearTimeout(this.quietTimer);
+    this.quietTimer = setTimeout(() => {
+      if (this.state === 'dead' || this.state === 'won') this.sound.suspend();
+    }, QUIET_MS);
+  }
+
+  // Run fn after `delay` seconds of game time. Pending calls stop while the
+  // game is paused and are dropped when the level resets.
+  after(delay, fn) {
+    this.later.push({ t: delay, fn });
   }
 
   statsText() {
@@ -370,6 +393,13 @@ class Game {
     this.arsenal.update(dt, this.input, look);
     this.input.endFrame();
     this.updateEffects(dt);
+    for (let i = this.later.length - 1; i >= 0; i--) {
+      const l = this.later[i];
+      l.t -= dt;
+      if (l.t > 0) continue;
+      this.later.splice(i, 1);
+      l.fn();
+    }
 
     if (this.exitPad && !p.dead && this.state === 'playing') {
       const d = Math.hypot(p.pos.x - this.exitPad.pos.x, p.pos.z - this.exitPad.pos.z);
@@ -382,6 +412,7 @@ class Game {
         this.state = 'dead';
         this.input.unlock();
         this.hud.showScreen('dead', this.statsText());
+        this.quietSoon();
       }
     }
     this.hud.update(dt);
@@ -628,7 +659,7 @@ class Game {
     if (e === this.boss) {
       for (let i = 0; i < 5; i++) {
         const p = e.pos.clone().add(new Vec3((Math.random() - .5) * 3, 1 + Math.random() * 4, (Math.random() - .5) * 3));
-        setTimeout(() => this.explosion(p, true, false), i * 180);
+        this.after(i * .18, () => this.explosion(p, true, false));
       }
       for (const d of this.level.doors) if (d.type === 'boss') d.target = d.height;
       this.hud.message('The Warlord is dead. The exit is open.');

@@ -4,12 +4,14 @@
 // walks the grid front to back, drawing floors, ceilings and the step faces
 // between cells while the unfilled part of the column shrinks. Sprites and
 // particles are then depth-tested against a per-pixel depth buffer.
-import { createTextures, createSky, TEXEL, SKY_TOP, SKY_BOTTOM } from './textures.js';
+import { createTextures, createSky, TEXEL, SKY_TOP, SKY_BOTTOM, rgbOf } from './textures.js';
 
 const BAR = 32;           // status bar height at 1× pixel size
 const FOCAL = .95;        // focal length as a fraction of the view height
 const MAX_DIST = 72;
 const LIGHT_K = .24;      // converts the old point-light intensities to this renderer
+// The widest view shape; wider windows stretch it.
+export const MAX_ASPECT = 2.4;
 
 // Light level → banded multiplier. Bright light rolls off instead of clipping,
 // and the result snaps to 1/14 steps like the old colour maps.
@@ -19,7 +21,9 @@ export const OPAQUE = 0x2000000, BRIGHT = 0x1000000;
 const SOLID = 1, SKY = 2, DOOR = 4;
 const DOOR_TEX = { plain: 'doorPlain', red: 'doorRed', blue: 'doorBlue', yellow: 'doorYellow', boss: 'doorBoss' };
 
-const rgbOf = (hex) => [(hex >> 16 & 255) / 255, (hex >> 8 & 255) / 255, (hex & 255) / 255];
+// Clamp a colour, posterize it to 5 bits per channel and pack it for the
+// framebuffer.
+const pack = (r, g, b) => 0xff000000 | ((b > 255 ? 255 : b) & 0xf8) << 16 | ((g > 255 ? 255 : g) & 0xf8) << 8 | ((r > 255 ? 255 : r) & 0xf8);
 
 export class Renderer {
   constructor(canvas) {
@@ -43,7 +47,7 @@ export class Renderer {
   resize(shape = innerWidth / Math.max(1, innerHeight)) {
     const s = this.scale, H = 200 * s;
     // Narrower windows stretch 320×200, like Doom on a 4:3 monitor.
-    const aspect = Math.min(2.4, Math.max(1.6, shape));
+    const aspect = Math.min(MAX_ASPECT, Math.max(1.6, shape));
     const W = Math.round(H * aspect / 2) * 2;
     this.W = W;
     this.H = H;
@@ -240,10 +244,7 @@ export class Renderer {
     r += (f[0] - r) * fog;
     g += (f[1] - g) * fog;
     b += (f[2] - b) * fog;
-    r = r > 255 ? 255 : r;
-    g = g > 255 ? 255 : g;
-    b = b > 255 ? 255 : b;
-    this.fb[i] = 0xff000000 | ((b & 0xf8) << 16) | ((g & 0xf8) << 8) | (r & 0xf8);
+    this.fb[i] = pack(r, g, b);
     this.depth[di] = d;
   }
 
@@ -336,7 +337,7 @@ export class Renderer {
             const lintel = Math.max(lo, this.ceilH[ni]);
             if (lintel < cc) this.wall(x, top, bot, cc, lintel, t1, this.sideT[ni], along, hx, hz, dim, null);
             const door = this.doorAt[ni];
-            this.wall(x, top, bot, Math.min(cc, lintel), lo, t1, this.tex[DOOR_TEX[door.type]], along, hx, hz, dim, door);
+            this.wall(x, top, bot, Math.min(cc, lintel), lo, t1, this.tex[DOOR_TEX[door.type]], along, hx, hz, dim, door, side);
           } else {
             this.wall(x, top, bot, cc, lo, t1, this.sideT[ni], along, hx, hz, dim, null);
           }
@@ -357,16 +358,15 @@ export class Renderer {
   }
 
   // Draw a vertical face between heights lo..hi at distance t, clipped to the
-  // open rows top..bot of column x.
-  wall(x, top, bot, hi, lo, t, tex, along, hx, hz, dim, door) {
+  // open rows top..bot of column x. `side` is 1 when the face runs along x.
+  wall(x, top, bot, hi, lo, t, tex, along, hx, hz, dim, door, side = 0) {
     const { W, F, HZ, ey } = this;
     const ys = Math.max(top, Math.ceil(HZ - (hi - ey) * F / t - .5)), ye = Math.min(bot, Math.ceil(HZ - (lo - ey) * F / t - .5));
     if (ys >= ye) return;
     const data = tex.data, m = tex.mask, size = tex.size;
     let u, v0, dv;
     if (door) {
-      const span = door.maxX - door.minX >= door.maxZ - door.minZ;
-      const a0 = span ? door.minX : door.minZ, len = span ? door.maxX - door.minX : door.maxZ - door.minZ;
+      const a0 = side ? door.minX : door.minZ, len = side ? door.maxX - door.minX : door.maxZ - door.minZ;
       u = Math.min(size - 1, Math.max(0, ((along - a0) / len * size) | 0));
       const bottom = door.floor + door.pos, k = size / door.height;
       // texel row = (bottom + height - worldY) * k
@@ -423,7 +423,7 @@ export class Renderer {
         r += (f[0] - r) * fog + add;
         g += (f[1] - g) * fog + add;
         b += (f[2] - b) * fog + add;
-        fb[i] = 0xff000000 | ((b > 255 ? 255 : b) & 0xf8) << 16 | ((g > 255 ? 255 : g) & 0xf8) << 8 | ((r > 255 ? 255 : r) & 0xf8);
+        fb[i] = pack(r, g, b);
         depth[i] = d;
       }
     }
@@ -437,15 +437,21 @@ export class Renderer {
     if (d < .15 || a <= 0) return;
     const F = this.F, W = this.W;
     const cx = W / 2 + (vx * this.rx + vz * this.rz) * F / d, cy = this.HZ - (wy - this.ey) * F / d;
+    // At least one pixel, then clipped to the view; skip it if nothing is left.
     const half = Math.max(.5, size * F / d * .5);
-    const x0 = Math.max(0, Math.round(cx - half)), x1 = Math.min(W, Math.round(cx + half) || x0 + 1);
-    const y0 = Math.max(0, Math.round(cy - half)), y1 = Math.min(this.vh, Math.round(cy + half) || y0 + 1);
+    let x0 = Math.round(cx - half), x1 = Math.max(x0 + 1, Math.round(cx + half));
+    let y0 = Math.round(cy - half), y1 = Math.max(y0 + 1, Math.round(cy + half));
+    x0 = Math.max(0, x0);
+    x1 = Math.min(W, x1);
+    y0 = Math.max(0, y0);
+    y1 = Math.min(this.vh, y1);
+    if (x0 >= x1 || y0 >= y1) return;
     const depth = this.depth, fb = this.fb;
     let L = null;
     if (!additive) L = this.light(wx, wy, wz);
     const fr = additive ? r * a : r * Math.min(1.6, L[0]), fg = additive ? g * a : g * Math.min(1.6, L[1]), fbl = additive ? b * a : b * Math.min(1.6, L[2]);
-    for (let y = y0; y < Math.max(y1, y0 + 1) && y < this.vh; y++) {
-      for (let x = x0; x < Math.max(x1, x0 + 1) && x < W; x++) {
+    for (let y = y0; y < y1; y++) {
+      for (let x = x0; x < x1; x++) {
         const i = y * W + x;
         if (depth[i] <= d) continue;
         const p = fb[i];
@@ -459,7 +465,7 @@ export class Renderer {
           pg += (fg - pg) * a;
           pb += (fbl - pb) * a;
         }
-        fb[i] = 0xff000000 | ((pb > 255 ? 255 : pb) & 0xf8) << 16 | ((pg > 255 ? 255 : pg) & 0xf8) << 8 | ((pr > 255 ? 255 : pr) & 0xf8);
+        fb[i] = pack(pr, pg, pb);
       }
     }
   }
@@ -484,7 +490,7 @@ export class Renderer {
           g *= lg;
           b *= lb;
         }
-        fb[y * W + x] = 0xff000000 | ((b > 255 ? 255 : b) & 0xf8) << 16 | ((g > 255 ? 255 : g) & 0xf8) << 8 | ((r > 255 ? 255 : r) & 0xf8);
+        fb[y * W + x] = pack(r, g, b);
       }
     }
   }
@@ -500,7 +506,7 @@ export class Renderer {
       pr += (r - pr) * a;
       pg += (g - pg) * a;
       pb += (b - pb) * a;
-      fb[i] = 0xff000000 | ((pb & 0xf8) << 16) | ((pg & 0xf8) << 8) | (pr & 0xf8);
+      fb[i] = pack(pr, pg, pb);
     }
   }
 

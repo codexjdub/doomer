@@ -215,9 +215,12 @@ export class Music {
     return o;
   }
 
+  // Noise from a random point in the shared 2 s buffer, looped so long hits
+  // (crashes, open hats) never run off its end.
   noise(dest, t, stop) {
     const s = this.sound.ctx.createBufferSource();
     s.buffer = this.sound.noiseBuf;
+    s.loop = true;
     s.connect(dest);
     s.start(t, Math.random() * 1.5);
     s.stop(stop);

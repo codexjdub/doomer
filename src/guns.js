@@ -1,8 +1,9 @@
-// First-person guns. The old 3D view models are rebuilt from boxes and
-// cylinders, shaded like metal, wood and plastic, and baked from the
-// player's eye into pixel-art sprites, one per animation frame.
+// First-person guns, built from boxes and cylinders, shaded like metal, wood
+// and plastic, and baked from the player's eye into pixel-art sprites, one per
+// animation frame.
 import { rasterize, shrink, SS, mul, eulerXYZ, translate, scaleM } from './sprites.js';
 import { paint } from './art.js';
+import { norm } from './vec.js';
 
 const MAT = {
   steel: { c: [.27, .29, .33], spec: 1.1, shin: 28 },
@@ -25,11 +26,6 @@ const NEAR = .06;
 const OUTLINE = 0x2000000 | 0x0a0808;
 const LIGHT = norm([-.45, .75, .5]);
 const FOV = 58 * Math.PI / 180;
-
-function norm(v) {
-  const l = Math.hypot(v[0], v[1], v[2]) || 1;
-  return [v[0] / l, v[1] / l, v[2] / l];
-}
 
 // A mesh builder: collects shaded triangles in camera space.
 class Model {
@@ -173,8 +169,9 @@ const FRAMES = [
   { idle: {}, spin1: { spin: .35 }, spin2: { spin: .7 } },
 ];
 
-// Bake every frame for a view of W×VH pixels. Each sprite carries ox/oy, its
-// top-left offset from the view centre; each gun its muzzle position.
+// Bake every frame for a view VH pixels tall and up to W wide. Each sprite
+// carries ox/oy, its top-left offset from the view centre; each gun its muzzle
+// position.
 export function bakeGuns(W, VH) {
   const F = (VH / 2) / Math.tan(FOV / 2);
   return BUILD.map((build, gi) => {

@@ -1,6 +1,7 @@
 // The status bar along the bottom of the screen, drawn straight into the
 // renderer's framebuffer with a small bitmap font: ammo, health, the weapons
 // you own, armor and keycards.
+import { noise2 as noise } from './textures.js';
 
 const FONT = {
   0: ['01110', '10001', '10011', '10101', '11001', '10001', '01110'], 1: ['00100', '01100', '00100', '00100', '00100', '00100', '01110'],
@@ -107,17 +108,4 @@ export class StatusBar {
       for (let x = 0; x < W; x++) fb[dst + x] = buf[src + ((x / scale) | 0)];
     }
   }
-}
-
-function hash(x, y) {
-  let h = (Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263)) | 0;
-  h = Math.imul(h ^ (h >>> 13), 1274126177);
-  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
-}
-
-function noise(x, y) {
-  const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi;
-  const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
-  const a = hash(xi, yi), b = hash(xi + 1, yi), c = hash(xi, yi + 1), d = hash(xi + 1, yi + 1);
-  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
 }

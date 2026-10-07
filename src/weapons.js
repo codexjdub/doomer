@@ -1,6 +1,7 @@
 // First-person weapons: firing, switching, and the baked pixel-art guns
 // (see guns.js) drawn over the view with bob, sway, recoil and a muzzle flash.
 import { bakeGuns } from './guns.js';
+import { MAX_ASPECT } from './renderer.js';
 import { lerp, clamp } from './vec.js';
 
 export const WEAPONS = [
@@ -110,12 +111,17 @@ export class Arsenal {
     this.swayY = lerp(this.swayY, clamp(mouse.y * .25, -8, 8), Math.min(1, dt * 10));
   }
 
+  // Bake the guns for the renderer's pixel size, as wide as the widest view so
+  // that resizing the window never crops them.
+  bake(R) {
+    if (this.bakedFor === R.VH) return;
+    this.guns = bakeGuns(Math.ceil(R.H * MAX_ASPECT), R.VH);
+    this.bakedFor = R.VH;
+  }
+
   // Draw the gun at the bottom of the view, lit by the light at the player.
   draw(R, light) {
-    if (this.bakedFor !== R.VH) {
-      this.guns = bakeGuns(R.W, R.VH);
-      this.bakedFor = R.VH;
-    }
+    this.bake(R);
     const p = this.game.player, gun = this.guns[this.current], F = gun.frames, s = R.VH / 168;
     let frame = F.idle;
     if (this.current === 0 && this.recoil > .45) frame = F.back;

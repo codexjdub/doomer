@@ -3,12 +3,12 @@
 // of 1993, so the game ships without a single image file.
 
 let seed = 7;
-export function rand() {
+function rand() {
   seed = (seed * 16807) % 2147483647;
   return seed / 2147483647;
 }
 
-export function makeCanvas(w, draw, h = w) {
+function makeCanvas(w, draw, h = w) {
   const c = document.createElement('canvas');
   c.width = w;
   c.height = h;
@@ -560,7 +560,9 @@ function paintDoor(stripe, glow, skull) {
 // Texels per metre. Textures tile every `size / TEXEL` metres.
 export const TEXEL = 32;
 
-const byte = (v) => (v <= 0 ? 0 : v >= 255 ? 255 : v | 0);
+// Colour helpers shared with the other pixel-art bakers.
+export const byte = (v) => (v <= 0 ? 0 : v >= 255 ? 255 : v | 0);
+export const rgbOf = (hex) => [(hex >> 16 & 255) / 255, (hex >> 8 & 255) / 255, (hex & 255) / 255];
 
 // Average `factor`×`factor` blocks of a canvas. Exact box filtering keeps the
 // tiles seamless, which canvas scaling does not.
@@ -636,7 +638,7 @@ function hash2(x, y) {
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
 
-function noise2(x, y) {
+export function noise2(x, y) {
   const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi;
   const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
   const a = hash2(xi, yi), b = hash2(xi + 1, yi), c = hash2(xi, yi + 1), d = hash2(xi + 1, yi + 1);

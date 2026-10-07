@@ -2,9 +2,9 @@
 // machine (idle → chase → attack / pain → dead). Each frame they report which
 // animation and frame to show; the game picks the picture for the angle it
 // is seen from.
-import { Vec3 } from './vec.js';
+import { Vec3, lerp, randInt } from './vec.js';
 
-export const TYPES = {
+const TYPES = {
   imp: {
     hp: 60, speed: 3.4, radius: .5, height: 2.5, pain: .75, ranged: true,
     melee: [6, 12], reach: 1.4, missile: [9, 16], sight: 'impSight', scale: 1.15,
@@ -24,8 +24,6 @@ export const TYPES = {
   },
 };
 
-const randInt = ([a, b]) => a + Math.floor(Math.random() * (b - a + 1));
-const lerp = (a, b, t) => a + (b - a) * t;
 const tmp = new Vec3();
 const DEATH_FRAMES = 4, DEATH_TIME = .6;
 

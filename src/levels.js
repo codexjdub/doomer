@@ -34,7 +34,6 @@ export const LEVELS = [
     theme: { fog: 0x0a0504, density: .028, hemi: [0x606880, 0x281810, .45], lamp: 0xffe0b8 },
     lights: [[30, 9, 10, HELL_SKY, 220, 24], [41, 9, 10, HELL_SKY, 220, 24], [35, 9, 19, HELL_SKY, 220, 24]],
     attract: { from: [11.5, 3.1, 21.5], to: [11.5, 2.6, 6] },
-    bossYaw: -Math.PI / 2,
     build() {
       const m = grid(72, 46);
       // Start room, with a doorway north into the first corridor.
@@ -82,12 +81,12 @@ export const LEVELS = [
       m.fill(36, 34, 37, 34, 'n');
       m.fill(42, 33, 42, 35, 'D');
       m.fill(43, 33, 48, 35, ',');
-      // Boss arena: lava pits in the corners, pillars, a raised dais.
+      // Arena: lava pits in the corners, pillars, a raised dais.
       m.fill(49, 27, 63, 43, 'x');
       for (const [x, z] of [[49, 27], [61, 27], [49, 41], [61, 41]]) m.fill(x, z, x + 2, z + 2, '*');
       for (const [x, z] of [[53, 30], [58, 30], [53, 39], [58, 39]]) m.fill(x, z, x + 1, z + 1, '#');
       m.fill(54, 33, 58, 37, 'r');
-      m.fill(64, 33, 64, 35, 'B');
+      m.fill(64, 33, 64, 35, 'D');
       // Exit room.
       m.fill(65, 31, 70, 39, 'M');
       m.fill(65, 32, 69, 38, 'E');
@@ -97,8 +96,7 @@ export const LEVELS = [
         [31, 31], [37, 31], [31, 37], [37, 37], [67, 33], [67, 37]], 'L');
       m.put([[3, 16], [19, 16], [31, 10], [37, 10], [52, 33], [60, 33], [52, 37], [60, 37]], 'F');
       m.put([[4, 6], [18, 6], [15, 13], [7, 22], [44, 12], [44, 18], [40, 5], [30, 32], [38, 32], [40, 35], [51, 32], [61, 38]], 'I');
-      m.put([[30, 17], [37, 17], [33, 20], [29, 37]], 'Z');
-      m.put([[56, 35]], 'W');
+      m.put([[30, 17], [37, 17], [33, 20], [29, 37], [55, 35], [57, 35]], 'Z');
       m.put([[6, 35], [28, 39], [56, 28]], 'U');
       m.put([[3, 5], [44, 22], [62, 35]], 'S');
       m.put([[16, 38], [19, 22], [27, 22]], '+');

@@ -5,6 +5,8 @@
 // models. The game then just picks a picture.
 import { monsterRig } from './monsters.js';
 import { OPAQUE, BRIGHT } from './renderer.js';
+import { byte } from './textures.js';
+import { norm, lerp } from './vec.js';
 
 export const PPM = 32;           // sprite pixels per metre
 const SS = 3;                    // supersampling while baking
@@ -21,11 +23,6 @@ const LOOK = {
 
 const DETAIL = { bone: [.55, .49, .39], claw: [.12, .09, .07], metal: [.32, .33, .36], tooth: [.62, .56, .43] };
 
-function norm(v) {
-  const l = Math.hypot(v[0], v[1], v[2]) || 1;
-  return [v[0] / l, v[1] / l, v[2] / l];
-}
-
 // ---------------------------------------------------------------- poses
 
 // Part rotations relative to the sculpted rest pose, mirroring the old
@@ -35,8 +32,6 @@ function makePose() {
   const pose = (name, x = 0, y = 0, z = 0) => { rot[name] = [x, y, z]; };
   return { rot, pose, bodyY: 0 };
 }
-
-const lerp = (a, b, t) => a + (b - a) * t;
 
 function walkPose(type, phase) {
   const P = makePose(), { pose } = P;
@@ -294,8 +289,6 @@ function bakeFrame(type, P, view, tilt = 0) {
   }
   return { w, h, data, ax: -minX * PPM, ay: maxY * PPM, ppm: PPM };
 }
-
-const byte = (v) => (v <= 0 ? 0 : v >= 255 ? 255 : v | 0);
 
 // Fill triangles into a depth buffer at supersampled resolution. verts holds
 // `stride` floats per vertex: x, y, z (larger z is nearer), then r, g, b, glow;
