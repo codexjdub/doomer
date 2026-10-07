@@ -382,8 +382,3 @@ export function monsterSprite(type, anim, frame, rel) {
   if (flip) o = 8 - o;
   return { sprite: views[o], flip };
 }
-
-export function animLength(type, anim) {
-  const sheet = sheets[type] || bakeMonster(type);
-  return (sheet[anim] || sheet.idle).length;
-}

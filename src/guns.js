@@ -67,7 +67,7 @@ class Model {
     this.quad(m, [-x, -y, -z], [-x, -y, z], [-x, y, z], [-x, y, -z], [-1, 0, 0], M);
   }
 
-  // Cylinder along local Y, like three.js CylinderGeometry, with end caps.
+  // Cylinder along local Y, with end caps.
   cyl(m, r, len, mat, seg = 12) {
     const M = MAT[mat], h = len / 2;
     for (let i = 0; i < seg; i++) {
@@ -83,8 +83,7 @@ class Model {
   }
 }
 
-// part(parent matrix, x, y, z, rotation x, y, z) → child matrix, like the
-// old three.js part() helper.
+// part(parent matrix, x, y, z, rotation x, y, z) → child matrix.
 const at = (parent, x, y, z, rx = 0, ry = 0, rz = 0) => mul(parent, mul(translate(x, y, z), eulerXYZ(rx, ry, rz)));
 
 // A gloved fist around a grip at m, with the forearm running back and down.

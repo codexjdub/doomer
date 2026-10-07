@@ -1,4 +1,4 @@
-// A small 3D vector with the parts of the three.js Vector3 API the game uses.
+// A small 3D vector with the operations the game uses.
 
 export class Vec3 {
   constructor(x = 0, y = 0, z = 0) {
@@ -79,7 +79,7 @@ export class Vec3 {
     return Math.sqrt(this.distanceToSquared(v));
   }
 
-  // Rotate around the vertical axis (three.js applyAxisAngle with +Y).
+  // Rotate around the vertical (+Y) axis.
   rotateY(a) {
     const c = Math.cos(a), s = Math.sin(a), x = this.x;
     this.x = x * c + this.z * s;
