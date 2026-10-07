@@ -1,5 +1,7 @@
-// HUD, menus and settings. Plain DOM on top of the canvas.
+// HUD, menus and settings. The status bar, crosshair and screen flashes are
+// drawn into the game's pixels; messages, the boss bar and menus are DOM.
 import { WEAPONS } from './weapons.js';
+import { StatusBar } from './statusbar.js';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -8,20 +10,11 @@ export class Hud {
     this.game = game;
     this.el = {
       hud: $('#hud'),
-      hp: $('#hp'),
-      ar: $('#ar'),
-      ammo: $('#ammo'),
-      ammoType: $('#ammo-type'),
-      slots: [...document.querySelectorAll('#slots span')],
-      keys: $('#keys'),
       messages: $('#messages'),
-      crosshair: $('#crosshair'),
       boss: $('#boss'),
       bossFill: $('.boss-fill'),
-      vignette: $('#vignette'),
-      flash: $('#flash'),
-      health: $('.stat.health'),
     };
+    this.bar = new StatusBar();
     this.screens = {
       title: $('#screen-title'),
       pause: $('#screen-pause'),
@@ -40,6 +33,10 @@ export class Hud {
     if (matchMedia('(pointer: coarse)').matches && !matchMedia('(pointer: fine)').matches) {
       $('#screen-title .tag').textContent = 'Doomer needs a keyboard and mouse. Open it on a computer to play.';
     }
+  }
+
+  loading(fraction) {
+    $('[data-action="play"]').textContent = `Loading… ${Math.round(fraction * 100)}%`;
   }
 
   ready() {
@@ -83,11 +80,10 @@ export class Hud {
 
   buildSettings(container) {
     container.innerHTML = `
-      <label>Graphics
-        <select data-set="quality">
-          <option value="low">Low</option>
-          <option value="medium">Medium</option>
-          <option value="high">High</option>
+      <label>Pixel size
+        <select data-set="pixels">
+          <option value="1">Chunky</option>
+          <option value="2">Fine</option>
         </select>
       </label>
       <label>Mouse sensitivity <input type="range" min="0.2" max="3" step="0.05" data-set="sensitivity"></label>
@@ -98,7 +94,7 @@ export class Hud {
       const key = input.dataset.set, box = input.type === 'checkbox';
       if (box) input.checked = !!this.game.settings[key]; else input.value = this.game.settings[key];
       input.addEventListener(input.tagName === 'SELECT' || box ? 'change' : 'input', () => {
-        const v = box ? input.checked : input.tagName === 'SELECT' ? input.value : parseFloat(input.value);
+        const v = box ? input.checked : input.tagName === 'SELECT' && input.dataset.set !== 'pixels' ? input.value : parseFloat(input.value);
         this.game.setSetting(key, v);
         document.querySelectorAll(`[data-set="${key}"]`).forEach((o) => {
           if (o === input) return;
@@ -134,7 +130,6 @@ export class Hud {
 
   hit() {
     this.hitT = .12;
-    this.el.crosshair.classList.add('hit');
   }
 
   pickupFlash() {
@@ -148,44 +143,25 @@ export class Hud {
   }
 
   update(dt) {
-    const g = this.game, p = g.player, w = WEAPONS[g.arsenal.pending >= 0 ? g.arsenal.pending : g.arsenal.current];
-    this.set('hp', Math.ceil(p.health), (v) => {
-      this.el.hp.textContent = v;
-      this.el.health.classList.toggle('low', v <= 25);
-    });
-    this.set('ar', p.armor, (v) => { this.el.ar.textContent = v; });
-    const ammo = p.ammo[w.ammo];
-    this.set('ammo', ammo, (v) => {
-      this.el.ammo.textContent = v;
-      this.el.ammo.classList.toggle('empty', v === 0);
-    });
-    this.set('ammoType', w.ammo, (v) => { this.el.ammoType.textContent = v; });
-    const slotKey = p.owned.join() + g.arsenal.current;
-    this.set('slots', slotKey, () => {
-      this.el.slots.forEach((s, i) => {
-        s.classList.toggle('owned', p.owned[i]);
-        s.classList.toggle('active', i === g.arsenal.current);
-      });
-    });
-    this.set('keys', [...p.keys].join(), () => {
-      this.el.keys.innerHTML = [...p.keys].map((k) => `<div class="key ${k}"></div>`).join('');
-    });
-
-    const boss = g.boss;
+    const g = this.game, boss = g.boss;
     const showBoss = boss && !boss.dead && boss.state !== 'idle';
     this.set('bossShow', !!showBoss, (v) => { this.el.boss.hidden = !v; });
     if (showBoss) this.set('bossHp', Math.max(0, boss.hp), (v) => { this.el.bossFill.style.width = `${(v / boss.def.hp) * 100}%`; });
-
-    if (this.hitT > 0) {
-      this.hitT -= dt;
-      if (this.hitT <= 0) this.el.crosshair.classList.remove('hit');
-    }
-
-    const low = p.health <= 25 && !p.dead ? .25 + Math.sin(g.time * 6) * .1 : 0;
-    const lava = p.inLava ? .45 : 0;
-    const v = Math.min(1, Math.max(p.hurtFlash * .9, low, lava, p.dead ? .7 : 0));
-    this.el.vignette.style.opacity = v.toFixed(3);
+    this.hitT = Math.max(0, this.hitT - dt);
     this.flashLevel = Math.max(0, this.flashLevel - dt * 2.5);
-    this.el.flash.style.opacity = this.flashLevel.toFixed(3);
+  }
+
+  // Pain washes the view red and pickups flash it gold, like Doom's palette
+  // shifts; then the crosshair and the status bar.
+  draw(R) {
+    const g = this.game, p = g.player, a = g.arsenal, w = WEAPONS[a.pending >= 0 ? a.pending : a.current];
+    const low = p.health <= 25 && !p.dead ? .1 + Math.sin(g.time * 6) * .05 : 0;
+    R.tint(190, 8, 0, Math.min(.7, Math.max(p.hurtFlash * .55, low, p.inLava ? .3 : 0, p.dead ? .45 : 0)));
+    R.tint(255, 225, 110, this.flashLevel * .4);
+    if (!p.dead) R.crosshair(this.hitT > 0);
+    this.bar.draw(R, {
+      ammo: p.ammo[w.ammo], health: Math.ceil(p.health), armor: p.armor,
+      owned: p.owned, current: a.pending >= 0 ? a.pending : a.current, keys: p.keys, time: g.time,
+    });
   }
 }

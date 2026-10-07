@@ -1,9 +1,8 @@
 // Sculpted monster models. Each body part is a signed distance field built
 // from blended ellipsoids and tapered capsules, meshed with surface nets and
-// painted with per-vertex colour, cavity shading and roughness/metalness.
-// Glowing veins are drawn per pixel in the shader. Claws, spines and teeth are
-// separate sharp cones. Parts are rigid and hang off pivots for animation.
-import * as THREE from 'three';
+// painted with per-vertex colour, cavity shading and glowing veins. Claws,
+// spines and teeth are separate sharp cones. Parts are rigid and hang off
+// pivots; sprites.js poses them and bakes them into pixel-art sprites.
 
 // ---------------------------------------------------------------- noise
 
@@ -182,9 +181,6 @@ function surfaceNet(f, min, max, step) {
   return { pos, index };
 }
 
-// Roughness and metalness per material.
-const SURFACE = { skin: [.78, 0], dark: [.75, 0], bone: [.42, 0], metal: [.32, .9], gum: [.28, 0] };
-
 function buildPart(spec, rig) {
   const W = spec.world;
   const wound = rig.wound ? (x, y, z) => rig.wound(x + W[0], y + W[1], z + W[2], spec.name) : null;
@@ -201,9 +197,9 @@ function buildPart(spec, rig) {
   }
   const { pos, index } = surfaceNet(f, min, max, step);
   const count = pos.length / 3;
-  const nrm = new Float32Array(count * 3), col = new Float32Array(count * 3);
-  const surf = new Float32Array(count * 3), rest = new Float32Array(count * 3);
-  const e = step * .5, c = new THREE.Color(), tmp = new THREE.Color();
+  const nrm = new Float32Array(count * 3), col = new Float32Array(count * 3), glow = new Float32Array(count);
+  const e = step * .5, c = [0, 0, 0], tmp = [0, 0, 0];
+  const fq = rig.veinFreq || 8, vw = rig.veinWidth || .06;
   for (let i = 0; i < count; i++) {
     const x = pos[i * 3], y = pos[i * 3 + 1], z = pos[i * 3 + 2];
     let gx = f(x + e, y, z) - f(x - e, y, z), gy = f(x, y + e, z) - f(x, y - e, z), gz = f(x, y, z + e) - f(x, y, z - e);
@@ -215,20 +211,20 @@ function buildPart(spec, rig) {
       + Math.min(1, Math.max(0, f(x + gx * .08, y + gy * .08, z + gz * .08) / .08)) * .5;
     const m = f.material(x, y, z);
     const wx = x + W[0], wy = y + W[1], wz = z + W[2];
-    rest.set([wx, wy, wz], i * 3);
-    c.copy(rig.palette[m] || rig.palette.skin);
+    copy(c, rig.palette[m] || rig.palette.skin);
     const mottled = .72 + .42 * noise3(wx * 6, wy * 6, wz * 6) + .16 * noise3(wx * 23, wy * 23, wz * 23);
-    c.multiplyScalar(mottled);
+    scale(c, mottled);
     let wet = 0, veinMask = 0;
     if (m === 'skin') {
-      if (rig.palette.ash) c.lerp(rig.palette.ash, smooth(.3, .75, noise3(wx * 9 + 7, wy * 9, wz * 9)) * .45);
-      if (rig.extremity) c.lerp(rig.palette.dark, rig.extremity(wx, wy, wz, spec.name));
+      if (rig.palette.ash) mix(c, rig.palette.ash, smooth(.3, .75, noise3(wx * 9 + 7, wy * 9, wz * 9)) * .45);
+      if (rig.extremity) mix(c, rig.palette.dark, rig.extremity(wx, wy, wz, spec.name));
       const w = wound ? wound(x, y, z) : 0;
       if (w > 0) {
         // Torn skin: wet striated muscle, and bare ribs on the imp's chest.
-        tmp.copy(rig.palette.flesh).multiplyScalar(.55 + .45 * Math.abs(Math.sin((wx * .6 + wy) * 150 + noise3(wx * 20, wy * 20, wz * 20) * 3)));
-        if (rig.ribs && spec.name === 'body' && y > .36 && y < .62 && Math.sin(y * 58) > .3 && w > .5) tmp.copy(rig.palette.bone);
-        c.lerp(tmp, smooth(.05, .45, w));
+        copy(tmp, rig.palette.flesh);
+        scale(tmp, .55 + .45 * Math.abs(Math.sin((wx * .6 + wy) * 150 + noise3(wx * 20, wy * 20, wz * 20) * 3)));
+        if (rig.ribs && spec.name === 'body' && y > .36 && y < .62 && Math.sin(y * 58) > .3 && w > .5) copy(tmp, rig.palette.bone);
+        mix(c, tmp, smooth(.05, .45, w));
         wet = w;
       }
       if (wound) {
@@ -236,77 +232,39 @@ function buildPart(spec, rig) {
         let drip = 0;
         for (let k = 1; k <= 6; k++) drip = Math.max(drip, wound(x, y + k * .035, z) * (1 - k / 7));
         drip *= smooth(.05, .35, noise3(wx * 38, 3.7, wz * 38));
-        c.lerp(rig.palette.blood, Math.min(1, drip * 1.6) * (1 - w));
+        mix(c, rig.palette.blood, Math.min(1, drip * 1.6) * (1 - w));
         wet = Math.max(wet, drip);
       }
       veinMask = rig.veinMask ? rig.veinMask(wx, wy, wz, spec.name) * (.35 + .65 * ao) * (1 - smooth(0, .3, wet)) : 0;
     }
-    c.multiplyScalar(.3 + .7 * Math.pow(ao, .9));
-    col.set([c.r, c.g, c.b], i * 3);
-    const [rough, metal] = SURFACE[m] || SURFACE.skin;
-    const r = rough * (.85 + .3 * noise3(wx * 11, wy * 11, wz * 11));
-    surf.set([r + (.22 - r) * Math.min(1, wet * 1.5), metal, veinMask], i * 3);
+    scale(c, .3 + .7 * Math.pow(ao, .9));
+    // Glowing veins: a thin band of noise, with a dark rim around it.
+    if (veinMask > 0) {
+      const vn = Math.abs(noise3(wx * fq, wy * fq, wz * fq) + .4 * noise3(wx * fq * 2.7, wy * fq * 2.7, wz * fq * 2.7));
+      scale(c, 1 - .7 * (1 - smooth(vw, vw * 2.2, vn)) * veinMask);
+      glow[i] = (1 - smooth(vw * .35, vw, vn)) * veinMask;
+    }
+    col.set(c, i * 3);
   }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  geo.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
-  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  geo.setAttribute('surf', new THREE.BufferAttribute(surf, 3));
-  geo.setAttribute('rest', new THREE.BufferAttribute(rest, 3));
-  geo.setIndex(index);
-  geo.computeBoundingSphere();
-  return geo;
+  return { pos: Float32Array.from(pos), nrm, col, glow, index: Uint32Array.from(index) };
 }
 
-// ---------------------------------------------------------------- material
+function copy(o, v) {
+  o[0] = v[0];
+  o[1] = v[1];
+  o[2] = v[2];
+}
 
-const veinGLSL = /* glsl */`
-  varying vec3 vSurf;
-  varying vec3 vRest;
-  uniform vec3 glowColor;
-  uniform float glowStrength;
-  uniform float flash;
-  uniform float veinFreq;
-  uniform float veinWidth;
-  float vhash(vec3 p) {
-    p = fract(p * .3183099 + .1);
-    p *= 17.0;
-    return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
-  }
-  float vnoise(vec3 x) {
-    vec3 i = floor(x), f = fract(x);
-    f = f * f * (3.0 - 2.0 * f);
-    return mix(mix(mix(vhash(i), vhash(i + vec3(1, 0, 0)), f.x), mix(vhash(i + vec3(0, 1, 0)), vhash(i + vec3(1, 1, 0)), f.x), f.y),
-               mix(mix(vhash(i + vec3(0, 0, 1)), vhash(i + vec3(1, 0, 1)), f.x), mix(vhash(i + vec3(0, 1, 1)), vhash(i + vec3(1, 1, 1)), f.x), f.y), f.z) * 2.0 - 1.0;
-  }`;
+function scale(o, k) {
+  o[0] *= k;
+  o[1] *= k;
+  o[2] *= k;
+}
 
-export function monsterMaterial(rig) {
-  const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 1 });
-  const uniforms = {
-    glowColor: { value: new THREE.Color(rig.glow || 0xff5a14) },
-    glowStrength: { value: rig.glowStrength || 3 },
-    flash: { value: 0 },
-    veinFreq: { value: rig.veinFreq || 8 },
-    veinWidth: { value: rig.veinWidth || .06 },
-  };
-  m.userData.uniforms = uniforms;
-  m.onBeforeCompile = (shader) => {
-    Object.assign(shader.uniforms, uniforms);
-    shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute vec3 surf;\nattribute vec3 rest;\nvarying vec3 vSurf;\nvarying vec3 vRest;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSurf = surf;\nvRest = rest;');
-    shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', `#include <common>\n${veinGLSL}`)
-      .replace('#include <color_fragment>', `#include <color_fragment>
-        float veinN = abs(vnoise(vRest * veinFreq) + .4 * vnoise(vRest * veinFreq * 2.7));
-        float vein = (1.0 - smoothstep(veinWidth * .35, veinWidth, veinN)) * vSurf.z;
-        float veinRim = (1.0 - smoothstep(veinWidth, veinWidth * 2.2, veinN)) * vSurf.z;
-        diffuseColor.rgb *= 1.0 - .7 * veinRim;`)
-      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = vSurf.x;')
-      .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\nmetalnessFactor = vSurf.y;')
-      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += glowColor * vein * glowStrength + vec3(flash);');
-  };
-  return m;
+function mix(o, v, t) {
+  o[0] += (v[0] - o[0]) * t;
+  o[1] += (v[1] - o[1]) * t;
+  o[2] += (v[2] - o[2]) * t;
 }
 
 // ---------------------------------------------------------------- rigs
@@ -734,86 +692,22 @@ const RIGS = { imp: impRig, brute: bruteRig, boss: bossRig, skull: skullRig };
 // ---------------------------------------------------------------- assembly
 
 const cache = {};
+const hexRgb = (hex) => [(hex >> 16 & 255) / 255, (hex >> 8 & 255) / 255, (hex & 255) / 255];
 
-function bake(type) {
+// The rig for a monster type with every part meshed (cached).
+export function monsterRig(type) {
   if (cache[type]) return cache[type];
   const rig = RIGS[type]();
-  rig.palette = Object.fromEntries(Object.entries(rig.palette).map(([k, v]) => [k, new THREE.Color(v)]));
+  rig.palette = Object.fromEntries(Object.entries(rig.palette).map(([k, v]) => [k, hexRgb(v)]));
   const world = {};
   for (const part of rig.parts) {
     const parent = part.parent ? world[part.parent] : [0, 0, 0];
     world[part.name] = [parent[0] + part.pivot[0], parent[1] + part.pivot[1], parent[2] + part.pivot[2]];
     part.world = world[part.name];
-    part.geometry = buildPart(part, rig);
+    part.mesh = buildPart(part, rig);
   }
   cache[type] = rig;
   return rig;
 }
 
-export function prebake(types = Object.keys(RIGS)) {
-  for (const t of types) bake(t);
-}
-
-const DETAIL = {
-  bone: new THREE.MeshStandardMaterial({ color: 0x8c7c62, roughness: .45 }),
-  claw: new THREE.MeshStandardMaterial({ color: 0x1a120c, roughness: .22 }),
-  metal: new THREE.MeshStandardMaterial({ color: 0x4a4c52, roughness: .3, metalness: .9 }),
-  tooth: new THREE.MeshStandardMaterial({ color: 0x9a8c6c, roughness: .4 }),
-};
-const spikeGeo = new THREE.ConeGeometry(1, 1, 8);
-spikeGeo.translate(0, .5, 0);
-const UP = new THREE.Vector3(0, 1, 0);
-
-function spike(parent, base, tip, r, mat) {
-  const dir = new THREE.Vector3().fromArray(tip).sub(new THREE.Vector3().fromArray(base));
-  const len = dir.length();
-  const m = new THREE.Mesh(spikeGeo, DETAIL[mat] || DETAIL.bone);
-  m.position.fromArray(base);
-  m.quaternion.setFromUnitVectors(UP, dir.normalize());
-  m.scale.set(r, len, r);
-  m.castShadow = true;
-  parent.add(m);
-}
-
-// Build an animatable monster: the root group plus named part groups.
-export function createMonster(type) {
-  const rig = bake(type);
-  const material = monsterMaterial(rig);
-  const eyeMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(...rig.eyes) });
-  const root = new THREE.Group();
-  const parts = {};
-  for (const part of rig.parts) {
-    const g = new THREE.Group();
-    g.position.fromArray(part.pivot);
-    if (part.scale) g.scale.setScalar(part.scale);
-    (part.parent ? parts[part.parent] : root).add(g);
-    parts[part.name] = g;
-    const mesh = new THREE.Mesh(part.geometry, material);
-    mesh.castShadow = true;
-    g.add(mesh);
-    for (const e of part.eyes || []) {
-      const eye = new THREE.Mesh(new THREE.SphereGeometry(part.eyeSize, 10, 8), eyeMat);
-      eye.position.fromArray(e);
-      g.add(eye);
-    }
-    for (const [base, tip, r, mat] of part.spikes || []) spike(g, base, tip, r, mat);
-    if (part.teeth) {
-      const t = part.teeth;
-      for (let i = 0; i < t.count; i++) {
-        const u = t.count === 1 ? .5 : i / (t.count - 1), x = t.from + (t.to - t.from) * u;
-        const edge = Math.abs(u - .5) * 2, jag = .75 + .5 * Math.abs(Math.sin(i * 12.9898 + t.count));
-        const len = t.len * jag * (1 + edge * .5), y = t.y, z = t.z - edge * edge * t.arc;
-        spike(g, [x, y, z], [x * 1.05, y + t.dir * len, z + .006], t.r * (1 + edge * .4), 'tooth');
-      }
-    }
-    if (part.core) {
-      const [x, y, z, r] = part.core;
-      const core = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 12), new THREE.MeshBasicMaterial({ color: new THREE.Color(7, 1.8, .4) }));
-      core.position.set(x, y, z);
-      g.add(core);
-      parts.core = core;
-    }
-  }
-  for (const [name, r] of Object.entries(rig.pose || {})) parts[name]?.rotation.set(...r);
-  return { root, parts, material, rest: rig.pose || {} };
-}
+export const MONSTER_TYPES = Object.keys(RIGS);

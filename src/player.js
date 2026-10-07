@@ -1,14 +1,16 @@
 // The player: movement with step-up and gravity, health and armor, and the
 // camera (bob, shake, recoil, death fall).
-import * as THREE from 'three';
+import { Vec3, clamp } from './vec.js';
 import { MAX } from './items.js';
 
 const STEP = .55;
+// The view shifts rather than tilts to look up and down, so keep it modest.
+const MAX_PITCH = .55;
 
 export class Player {
   constructor() {
-    this.pos = new THREE.Vector3();
-    this.vel = new THREE.Vector3();
+    this.pos = new Vec3();
+    this.vel = new Vec3();
     this.radius = .38;
     this.height = 1.75;
   }
@@ -32,14 +34,13 @@ export class Player {
     this.hurtFlash = 0;
     this.shake = 0;
     this.kick = 0;
-    this.roll = 0;
     this.lavaTimer = 0;
     this.hurtSoundT = 0;
     this.inLava = false;
   }
 
   eye() {
-    return new THREE.Vector3(this.pos.x, this.pos.y + this.eyeHeight - this.stepOffset, this.pos.z);
+    return new Vec3(this.pos.x, this.pos.y + this.eyeHeight - this.stepOffset, this.pos.z);
   }
 
   hurt(amount, from, g) {
@@ -77,12 +78,11 @@ export class Player {
 
     if (this.dead) {
       this.eyeHeight = Math.max(.35, this.eyeHeight - dt * 2.2);
-      this.roll = Math.min(.5, this.roll + dt * .8);
       this.vel.x *= .9;
       this.vel.z *= .9;
     } else {
       this.yaw -= look.x * look.sens * .0022;
-      this.pitch = THREE.MathUtils.clamp(this.pitch - look.y * look.sens * .0022, -1.45, 1.45);
+      this.pitch = clamp(this.pitch - look.y * look.sens * .0022, -MAX_PITCH, MAX_PITCH);
     }
 
     // Walk direction relative to where we're looking.
@@ -154,7 +154,7 @@ export class Player {
       this.pos.y = span.ceil - this.height;
       this.vel.y = Math.min(0, this.vel.y);
     }
-    this.stepOffset = THREE.MathUtils.clamp(this.stepOffset, -1, 1);
+    this.stepOffset = clamp(this.stepOffset, -1, 1);
 
     // Lava burns; slime eats at you more slowly.
     const cell = L.at(this.pos.x, this.pos.z);
@@ -173,15 +173,22 @@ export class Player {
     if (this.grounded) this.bobPhase += dt * moving * 1.45;
   }
 
-  applyCamera(camera, t) {
+  // Fill the renderer's camera: eye position (with bob and shake), yaw, pitch.
+  applyCamera(cam) {
     const eye = this.eye();
     const speed = Math.min(1, Math.hypot(this.vel.x, this.vel.z) / 7.6) * (this.grounded ? 1 : 0);
-    eye.y += Math.sin(this.bobPhase * 2) * .035 * speed;
     const sh = this.shake * this.shake;
-    eye.x += (Math.random() - .5) * sh * .6;
-    eye.y += (Math.random() - .5) * sh * .6;
-    eye.z += (Math.random() - .5) * sh * .6;
-    camera.position.copy(eye);
-    camera.rotation.set(this.pitch + this.kick, this.yaw, Math.sin(this.bobPhase) * .006 * speed + this.roll, 'YXZ');
+    cam.x = eye.x + (Math.random() - .5) * sh * .6;
+    cam.y = eye.y + Math.sin(this.bobPhase * 2) * .035 * speed + (Math.random() - .5) * sh * .6;
+    cam.z = eye.z + (Math.random() - .5) * sh * .6;
+    cam.yaw = this.yaw;
+    cam.pitch = clamp(this.pitch + this.kick, -MAX_PITCH - .1, MAX_PITCH + .1);
+  }
+
+  // Unit vector the crosshair points along. The view is sheared rather than
+  // tilted, so the centre ray climbs by tan(pitch) per unit forward.
+  aim() {
+    const t = Math.tan(this.pitch + this.kick);
+    return new Vec3(-Math.sin(this.yaw), t, -Math.cos(this.yaw)).normalize();
   }
 }

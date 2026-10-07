@@ -1,6 +1,7 @@
-// First-person weapons. The view models live in their own small scene that
-// is drawn on top of the world, so guns never clip into walls.
-import * as THREE from 'three';
+// First-person weapons: firing, switching, and the baked pixel-art guns
+// (see guns.js) drawn over the view with bob, sway, recoil and a muzzle flash.
+import { bakeGuns } from './guns.js';
+import { lerp, clamp } from './vec.js';
 
 export const WEAPONS = [
   { name: 'Pistol', ammo: 'bullets', rate: .34, dmg: [12, 18], pellets: 1, spread: .008, kick: .6, sound: 'pistol', shake: .04 },
@@ -8,121 +9,12 @@ export const WEAPONS = [
   { name: 'Chaingun', ammo: 'bullets', rate: .085, dmg: [10, 15], pellets: 1, spread: .028, kick: .35, sound: 'chaingun', shake: .05 },
 ];
 
-// Where each view model rests in camera space.
-const REST = [
-  new THREE.Vector3(.2, -.2, -.46),
-  new THREE.Vector3(.2, -.24, -.34),
-  new THREE.Vector3(.2, -.25, -.4),
-];
-
-const steel = () => new THREE.MeshStandardMaterial({ color: 0x5b6068, metalness: .85, roughness: .32 });
-const darkSteel = () => new THREE.MeshStandardMaterial({ color: 0x2c2f34, metalness: .8, roughness: .38 });
-const polymer = () => new THREE.MeshStandardMaterial({ color: 0x1c1d20, metalness: .1, roughness: .6 });
-const wood = () => new THREE.MeshStandardMaterial({ color: 0x6e3e1c, roughness: .55 });
-
-function part(parent, geo, mat, x, y, z, rx = 0) {
-  const m = new THREE.Mesh(geo, mat);
-  m.position.set(x, y, z);
-  m.rotation.x = rx;
-  parent.add(m);
-  return m;
-}
-
-export function buildPistol() {
-  const root = new THREE.Group(), s = steel(), d = darkSteel(), p = polymer();
-  root.scale.setScalar(.85);
-  const slide = part(root, new THREE.BoxGeometry(.07, .085, .34), s, 0, 0, -.13);
-  part(slide, new THREE.BoxGeometry(.072, .03, .2), d, 0, .01, .05);
-  for (let i = 0; i < 5; i++) part(slide, new THREE.BoxGeometry(.074, .06, .008), d, 0, 0, .1 + i * .014);
-  part(root, new THREE.BoxGeometry(.012, .02, .02), d, 0, .052, -.285);
-  part(root, new THREE.BoxGeometry(.04, .02, .02), d, 0, .052, .02);
-  part(root, new THREE.BoxGeometry(.066, .05, .3), p, 0, -.06, -.12);
-  part(root, new THREE.CylinderGeometry(.016, .016, .04, 10), d, 0, -.005, -.31, Math.PI / 2);
-  part(root, new THREE.BoxGeometry(.062, .17, .085), p, 0, -.14, .02, .28);
-  part(root, new THREE.TorusGeometry(.035, .007, 6, 12, Math.PI), d, 0, -.1, -.06, Math.PI / 2);
-  const muzzle = new THREE.Object3D();
-  muzzle.position.set(0, -.005, -.34);
-  root.add(muzzle);
-  return { root, muzzle, slide };
-}
-
-export function buildShotgun() {
-  const root = new THREE.Group(), s = steel(), d = darkSteel(), w = wood();
-  for (const x of [-.031, .031]) part(root, new THREE.CylinderGeometry(.03, .03, .78, 16), s, x, 0, -.46, Math.PI / 2);
-  part(root, new THREE.BoxGeometry(.012, .012, .7), d, 0, .03, -.42);
-  const pump = part(root, new THREE.CylinderGeometry(.046, .046, .26, 12), w, 0, -.058, -.44, Math.PI / 2);
-  for (let i = 0; i < 5; i++) part(pump, new THREE.TorusGeometry(.047, .004, 4, 16), d, 0, -.1 + i * .05, 0, Math.PI / 2);
-  part(root, new THREE.BoxGeometry(.12, .12, .3), d, 0, -.02, 0);
-  part(root, new THREE.BoxGeometry(.125, .03, .18), s, 0, .035, -.02);
-  part(root, new THREE.BoxGeometry(.09, .15, .36), w, 0, -.09, .3, -.12);
-  part(root, new THREE.TorusGeometry(.04, .008, 6, 12, Math.PI), d, 0, -.1, .06, Math.PI / 2);
-  const muzzle = new THREE.Object3D();
-  muzzle.position.set(0, 0, -.86);
-  root.add(muzzle);
-  return { root, muzzle, pump };
-}
-
-export function buildChaingun() {
-  const root = new THREE.Group(), s = steel(), d = darkSteel(), p = polymer();
-  const barrels = new THREE.Group();
-  barrels.position.set(0, 0, -.38);
-  root.add(barrels);
-  for (let i = 0; i < 6; i++) {
-    const a = i / 6 * Math.PI * 2;
-    part(barrels, new THREE.CylinderGeometry(.018, .018, .62, 10), s, Math.cos(a) * .05, Math.sin(a) * .05, -.1, Math.PI / 2);
-  }
-  part(barrels, new THREE.CylinderGeometry(.075, .075, .04, 16), d, 0, 0, -.36, Math.PI / 2);
-  part(barrels, new THREE.CylinderGeometry(.075, .075, .04, 16), d, 0, 0, .05, Math.PI / 2);
-  part(barrels, new THREE.CylinderGeometry(.02, .02, .7, 8), d, 0, 0, -.1, Math.PI / 2);
-  part(root, new THREE.CylinderGeometry(.1, .1, .34, 16), d, 0, 0, .02, Math.PI / 2);
-  part(root, new THREE.BoxGeometry(.16, .12, .26), p, 0, -.07, .05);
-  part(root, new THREE.BoxGeometry(.06, .18, .08), p, 0, -.18, .12, .3);
-  part(root, new THREE.BoxGeometry(.04, .1, .2), s, 0, .12, -.02);
-  part(root, new THREE.BoxGeometry(.1, .2, .12), p, .14, -.08, .02);
-  const muzzle = new THREE.Object3D();
-  muzzle.position.set(0, 0, -.8);
-  root.add(muzzle);
-  return { root, muzzle, barrels };
-}
-
 export class Arsenal {
   constructor(game) {
     this.game = game;
-    this.scene = new THREE.Scene();
-    this.camera = new THREE.PerspectiveCamera(58, 1, .01, 10);
-    this.scene.add(this.camera);
-    this.hemi = new THREE.HemisphereLight(0x9aa0b0, 0x2a1a12, 1.4);
-    this.scene.add(this.hemi);
-    this.key = new THREE.DirectionalLight(0xffe8d0, 2.2);
-    this.key.position.set(-1, 2, 1);
-    this.scene.add(this.key);
-    this.muzzleLight = new THREE.PointLight(0xffb060, 0, 3, 2);
-    this.camera.add(this.muzzleLight);
-
-    this.holder = new THREE.Group();
-    this.camera.add(this.holder);
-    this.models = [buildPistol(), buildShotgun(), buildChaingun()];
-    for (const m of this.models) {
-      m.root.visible = false;
-      this.holder.add(m.root);
-    }
-    const flashMat = new THREE.SpriteMaterial({
-      map: game.tex.glow,
-      color: new THREE.Color(6, 3.6, 1.4),
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      transparent: true,
-    });
-    this.flash = new THREE.Sprite(flashMat);
-    this.flash.visible = false;
-    this.scene.add(this.flash);
-    this.tint = new THREE.Color();
+    this.guns = null;
+    this.bakedFor = null;
     this.reset();
-  }
-
-  setEnvironment(env) {
-    this.scene.environment = env;
-    this.scene.environmentIntensity = .6;
   }
 
   reset() {
@@ -135,8 +27,8 @@ export class Arsenal {
     this.spin = 0;
     this.spinSpeed = 0;
     this.pumpT = 0;
-    this.sway = new THREE.Vector2();
-    this.models.forEach((m, i) => { m.root.visible = i === 0; });
+    this.swayX = 0;
+    this.swayY = 0;
   }
 
   select(i) {
@@ -165,6 +57,11 @@ export class Arsenal {
     return -1;
   }
 
+  // The muzzle flash lights the room for a moment.
+  get flashing() {
+    return this.flashT > 0;
+  }
+
   update(dt, input, mouse) {
     const g = this.game, p = g.player, w = WEAPONS[this.current];
     this.cool -= dt;
@@ -173,10 +70,8 @@ export class Arsenal {
     if (this.pending >= 0) {
       this.lower = Math.min(1, this.lower + dt * 6);
       if (this.lower === 1) {
-        this.models[this.current].root.visible = false;
         this.current = this.pending;
         this.pending = -1;
-        this.models[this.current].root.visible = true;
         this.cool = Math.max(this.cool, .1);
       }
     } else {
@@ -195,7 +90,7 @@ export class Arsenal {
         p.ammo[w.ammo]--;
         this.cool = w.rate;
         this.recoil = 1;
-        this.flashT = .05;
+        this.flashT = .06;
         this.pumpT = this.current === 1 ? .55 : 0;
         g.fireWeapon(w);
         g.sound.play(w.sound, null, .9);
@@ -206,52 +101,45 @@ export class Arsenal {
     if (!input.fire) this.clicked = false;
 
     // Chaingun barrels spin up while firing.
-    this.spinSpeed = THREE.MathUtils.lerp(this.spinSpeed, wantsFire && this.current === 2 ? 28 : 0, Math.min(1, dt * 4));
+    this.spinSpeed = lerp(this.spinSpeed, wantsFire && this.current === 2 ? 28 : 0, Math.min(1, dt * 4));
     this.spin += this.spinSpeed * dt;
-    this.models[2].barrels.rotation.z = this.spin;
-
-    // Shotgun pump after each shot.
     this.pumpT = Math.max(0, this.pumpT - dt);
-    const pumpK = this.pumpT > 0 && this.pumpT < .4 ? Math.sin((1 - this.pumpT / .4) * Math.PI) : 0;
-    this.models[1].pump.position.z = -.44 + pumpK * .12;
-
-    // Pistol slide kick.
-    this.models[0].slide.position.z = -.13 + this.recoil * .05;
-
-    // Bob, sway and recoil.
-    const m = this.models[this.current];
-    this.sway.x = THREE.MathUtils.lerp(this.sway.x, THREE.MathUtils.clamp(-mouse.x * .0008, -.05, .05), Math.min(1, dt * 10));
-    this.sway.y = THREE.MathUtils.lerp(this.sway.y, THREE.MathUtils.clamp(mouse.y * .0008, -.05, .05), Math.min(1, dt * 10));
-    const speed = Math.min(1, Math.hypot(p.vel.x, p.vel.z) / 7) * (p.grounded ? 1 : .3);
-    const bx = Math.sin(p.bobPhase) * .014 * speed, by = -Math.abs(Math.cos(p.bobPhase)) * .012 * speed;
-    const rest = REST[this.current];
     this.recoil = Math.max(0, this.recoil - dt * (this.current === 2 ? 14 : 6));
-    const r = this.recoil * (this.current === 1 ? 1 : this.current === 0 ? .6 : .35);
-    m.root.position.set(rest.x + bx + this.sway.x, rest.y + by + this.sway.y - this.lower * .35 - (p.dead ? .5 : 0), rest.z + r * .08);
-    m.root.rotation.set(r * .22 + this.lower * .6, this.sway.x * 2, 0);
-
-    // Muzzle flash sprite and light.
     this.flashT -= dt;
-    const flashing = this.flashT > 0;
-    this.flash.visible = flashing;
-    if (flashing) {
-      m.muzzle.getWorldPosition(this.flash.position);
-      const s = this.current === 1 ? .55 : this.current === 2 ? .35 : .3;
-      this.flash.scale.setScalar(s * (.8 + Math.random() * .4));
-      this.flash.material.rotation = Math.random() * Math.PI;
-    }
-    this.muzzleLight.intensity = flashing ? 3 : 0;
-    this.muzzleLight.position.set(.2, -.1, -.6);
-
-    // Tint the gun with the colour of the strongest nearby light.
-    const s = g.lights.strongest;
-    this.tint.setRGB(1, 1, 1);
-    if (s) this.tint.lerp(s.color, .55);
-    this.key.color.lerp(this.tint, Math.min(1, dt * 3));
+    this.swayX = lerp(this.swayX, clamp(-mouse.x * .25, -12, 12), Math.min(1, dt * 10));
+    this.swayY = lerp(this.swayY, clamp(mouse.y * .25, -8, 8), Math.min(1, dt * 10));
   }
 
-  sync(mainCamera) {
-    this.camera.aspect = mainCamera.aspect;
-    this.camera.updateProjectionMatrix();
+  // Draw the gun at the bottom of the view, lit by the light at the player.
+  draw(R, light) {
+    if (this.bakedFor !== R.VH) {
+      this.guns = bakeGuns(R.W, R.VH);
+      this.bakedFor = R.VH;
+    }
+    const p = this.game.player, gun = this.guns[this.current], F = gun.frames, s = R.VH / 168;
+    let frame = F.idle;
+    if (this.current === 0 && this.recoil > .45) frame = F.back;
+    if (this.current === 1 && this.pumpT > 0 && this.pumpT < .4) {
+      const k = Math.sin((1 - this.pumpT / .4) * Math.PI);
+      frame = k > .7 ? F.pump2 : k > .25 ? F.pump1 : F.idle;
+    }
+    if (this.current === 2) frame = [F.idle, F.spin1, F.spin2][(((this.spin / (Math.PI / 3)) * 3) | 0) % 3];
+
+    const speed = Math.min(1, Math.hypot(p.vel.x, p.vel.z) / 7) * (p.grounded ? 1 : .3);
+    const bx = Math.sin(p.bobPhase) * 7 * speed * s, by = Math.abs(Math.cos(p.bobPhase)) * 6 * speed * s;
+    const kick = this.recoil * (this.current === 1 ? 7 : this.current === 0 ? 4 : 2) * s;
+    const x = R.W / 2 + bx + this.swayX * s, y = R.VH / 2 + by + this.swayY * s + kick + this.lower * R.VH * .45 + (p.dead ? R.VH * .3 : 0);
+    // Keep guns readable in dark rooms, and warm when the flash goes off.
+    const L = [light[0] * 1.15 + .22, light[1] * 1.15 + .22, light[2] * 1.15 + .22];
+    if (this.flashing) {
+      L[0] += .9;
+      L[1] += .6;
+      L[2] += .25;
+    }
+    R.blit(frame, x + frame.ox, y + frame.oy, L.map((v) => Math.min(1.6, v)));
+    if (this.flashing) {
+      const f = F.flash;
+      R.blit(f, x + gun.muzzle[0] - f.w / 2, y + gun.muzzle[1] - f.h / 2 - kick, [1, 1, 1]);
+    }
   }
 }

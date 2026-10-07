@@ -1,6 +1,6 @@
 # Doomer
 
-A fast, bloody, one-page 3D shooter that runs in the browser. Built with [Three.js](https://threejs.org/), with no build step and no asset files: every texture, model and sound is generated in code.
+A fast, bloody, one-page shooter that runs in the browser, in the style of 1993: first-person, chunky pixel art at 320×200, drawn by a software renderer one column at a time. No libraries, no build step and no asset files: every texture, sprite, model and sound is generated in code.
 
 ## Play locally
 
@@ -28,21 +28,27 @@ Then open <http://localhost:8000>.
 
 | File | What it does |
 | --- | --- |
-| `index.html`, `style.css` | Page, HUD and menus |
+| `index.html`, `style.css` | Page, messages and menus |
 | `src/main.js` | Game setup, main loop, combat and effects glue |
+| `src/renderer.js` | Software renderer: walls, floors, ceilings, sky and doors column by column, baked light maps, sprites and particles |
 | `src/levels.js` | The five levels: layouts drawn as rectangles on a grid, plus each level's theme |
-| `src/level.js` | Cell presets, level geometry, collision, line of sight, pathfinding, doors |
-| `src/textures.js` | Procedural textures, normal maps, materials and the sky |
-| `src/player.js` | Player movement, health and camera |
-| `src/weapons.js` | Weapon models, firing, recoil and view-model animation |
-| `src/enemies.js` | Monster AI, animation and fireballs |
+| `src/level.js` | Cell presets, collision, line of sight, pathfinding, doors |
+| `src/textures.js` | Procedural textures shrunk to pixel art, and the sky |
 | `src/monsters.js` | Sculpted monster models (distance fields meshed with surface nets) |
+| `src/sprites.js` | Bakes the monster models into pixel-art sprites from five angles for every animation frame |
+| `src/guns.js` | First-person gun models baked into pixel-art sprites |
+| `src/art.js` | Hand-drawn pixel art: pickups, lamps, torches, the exit pad, fire, explosions and gibs |
+| `src/statusbar.js` | The status bar: ammo, health, weapons, armor and keys |
+| `src/player.js` | Player movement, health and camera |
+| `src/weapons.js` | Firing, switching and the gun on screen |
+| `src/enemies.js` | Monster AI, animation frames and fireballs |
 | `src/items.js` | Pickups, lamps, torches and the exit pad |
-| `src/effects.js` | Particles, decals, gibs and the dynamic light pool |
+| `src/effects.js` | Particles, gibs, explosions and the moving lights |
 | `src/audio.js` | Synthesized sound effects and ambience |
 | `src/music.js` | Adaptive soundtrack: explore, combat and boss layers synthesized live |
 | `src/automap.js` | Explored-area tracking, corner minimap and full-screen map |
 | `src/hud.js`, `src/input.js` | HUD, menus, settings, keyboard and mouse |
+| `src/vec.js` | A small 3D vector |
 
 ## Editing levels
 

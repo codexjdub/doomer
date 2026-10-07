@@ -1,7 +1,7 @@
 // A level: a grid of 1 m cells (laid out in levels.js). Each character is
 // either a cell preset (walls, floors at different heights, lava, doors) or
 // an entity that stands on the floor of a neighbouring cell.
-import * as THREE from 'three';
+import { Vec3 } from './vec.js';
 
 // Cell presets. floor/ceil are heights in metres. ftex/ctex/side name the
 // materials for the floor, ceiling and the step faces this cell exposes to
@@ -107,7 +107,7 @@ export class Level {
   groupDoors() {
     for (const c of this.cells) {
       if (!c.doorType || c.door) continue;
-      const door = { type: c.doorType, cells: [], pos: 0, target: 0, floor: c.floor, ceil: c.ceil, mesh: null };
+      const door = { type: c.doorType, cells: [], pos: 0, target: 0, floor: c.floor, ceil: c.ceil };
       const stack = [c];
       c.door = door;
       while (stack.length) {
@@ -154,85 +154,6 @@ export class Level {
     return c.solid || (c.door !== null && c.door !== undefined && c.door.pos < Math.min(2.1, c.door.height - .05));
   }
 
-  // ------------------------------------------------------------ geometry
-
-  build(materials) {
-    const groups = {};
-    const group = (name) => groups[name] || (groups[name] = { pos: [], nrm: [], uv: [], idx: [] });
-    const scaleOf = (name) => materials[name].userData.scale || 2;
-
-    const quad = (name, verts, n, uvs) => {
-      const g = group(name), base = g.pos.length / 3;
-      for (let i = 0; i < 4; i++) {
-        g.pos.push(...verts[i]);
-        g.nrm.push(...n);
-        g.uv.push(...uvs[i]);
-      }
-      g.idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
-    };
-
-    // A vertical face along the cell edge a→b; the winding makes it face the
-    // cell being processed.
-    const wall = (name, ax, az, bx, bz, y0, y1) => {
-      if (y1 - y0 < .001) return;
-      const s = scaleOf(name), dx = bx - ax, dz = bz - az;
-      const u0 = (ax + az) / s, u1 = (bx + bz) / s;
-      quad(name, [[ax, y0, az], [bx, y0, bz], [bx, y1, bz], [ax, y1, az]], [-dz, 0, dx],
-        [[u0, y0 / s], [u1, y0 / s], [u1, y1 / s], [u0, y1 / s]]);
-    };
-
-    for (const c of this.cells) {
-      if (c.solid) continue;
-      const { x, z } = c;
-      this.forEachEdge(x, z, (n, ax, az, bx, bz) => {
-        if (n.solid) {
-          wall(n.wall, ax, az, bx, bz, c.floor, c.ceil);
-          return;
-        }
-        if (n.floor > c.floor) wall(n.side, ax, az, bx, bz, c.floor, Math.min(n.floor, c.ceil));
-        if (n.ceil < c.ceil) wall(n.side, ax, az, bx, bz, Math.max(n.ceil, c.floor), c.ceil);
-      });
-      const fs = scaleOf(c.ftex);
-      quad(c.ftex, [[x, c.floor, z], [x, c.floor, z + 1], [x + 1, c.floor, z + 1], [x + 1, c.floor, z]], [0, 1, 0],
-        [[x / fs, z / fs], [x / fs, (z + 1) / fs], [(x + 1) / fs, (z + 1) / fs], [(x + 1) / fs, z / fs]]);
-      if (!c.sky) {
-        const cs = scaleOf(c.ctex);
-        quad(c.ctex, [[x, c.ceil, z], [x + 1, c.ceil, z], [x + 1, c.ceil, z + 1], [x, c.ceil, z + 1]], [0, -1, 0],
-          [[x / cs, z / cs], [(x + 1) / cs, z / cs], [(x + 1) / cs, (z + 1) / cs], [x / cs, (z + 1) / cs]]);
-      }
-    }
-
-    const meshes = [];
-    for (const [name, g] of Object.entries(groups)) {
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.Float32BufferAttribute(g.pos, 3));
-      geo.setAttribute('normal', new THREE.Float32BufferAttribute(g.nrm, 3));
-      geo.setAttribute('uv', new THREE.Float32BufferAttribute(g.uv, 2));
-      geo.setIndex(g.idx);
-      geo.computeBoundingSphere();
-      const mesh = new THREE.Mesh(geo, materials[name]);
-      mesh.receiveShadow = name !== 'lava';
-      mesh.castShadow = name !== 'lava';
-      mesh.matrixAutoUpdate = false;
-      meshes.push(mesh);
-    }
-
-    const doorMats = {
-      plain: materials.doorPlain, red: materials.doorRed, blue: materials.doorBlue,
-      yellow: materials.doorYellow, boss: materials.doorBoss,
-    };
-    for (const d of this.doors) {
-      const w = d.maxX - d.minX, depth = d.maxZ - d.minZ;
-      const alongX = w >= depth;
-      const geo = new THREE.BoxGeometry(alongX ? w : .5, d.height, alongX ? .5 : depth);
-      d.mesh = new THREE.Mesh(geo, doorMats[d.type]);
-      d.mesh.castShadow = d.mesh.receiveShadow = true;
-      d.mesh.position.set(d.cx, d.floor + d.height / 2, d.cz);
-      meshes.push(d.mesh);
-    }
-    return meshes;
-  }
-
   // ------------------------------------------------------------ doors
 
   updateDoors(dt, onMoveStart) {
@@ -244,7 +165,6 @@ export class Level {
       }
       d.pos = Math.min(d.target, d.pos + dt * 2.6);
       if (d.pos === d.target) d.moving = false;
-      d.mesh.position.y = d.floor + d.height / 2 + d.pos;
     }
   }
 
@@ -252,7 +172,6 @@ export class Level {
     for (const d of this.doors) {
       d.pos = d.target = 0;
       d.moving = false;
-      d.mesh.position.y = d.floor + d.height / 2;
     }
   }
 
@@ -331,7 +250,7 @@ export class Level {
       }
       px = o.x + d.x * lo; py = o.y + d.y * lo; pz = o.z + d.z * lo;
       const hx = o.x + d.x * hi, hy = o.y + d.y * hi, hz = o.z + d.z * hi;
-      const normal = new THREE.Vector3();
+      const normal = new Vec3();
       const cellA = this.at(px, pz), cellB = this.at(hx, hz);
       if (cellA === cellB) {
         normal.set(0, hy < cellA.floor ? 1 : -1, 0);
@@ -340,7 +259,7 @@ export class Level {
       } else {
         normal.set(0, 0, Math.sign(pz - hz));
       }
-      return { dist: lo, point: new THREE.Vector3(px, py, pz), normal };
+      return { dist: lo, point: new Vec3(px, py, pz), normal };
     }
     return null;
   }

@@ -1,6 +1,6 @@
-// Procedural textures and materials. Everything is painted onto canvases at
-// startup, so the game ships without a single image file.
-import * as THREE from 'three';
+// Procedural textures. Everything is painted onto canvases at startup, then
+// shrunk to low-resolution pixel art: 32 texels per metre, like the shooters
+// of 1993, so the game ships without a single image file.
 
 let seed = 7;
 export function rand() {
@@ -44,38 +44,6 @@ function bevel(x, px, py, w, h, size, light = .12, dark = .4) {
   x.fillStyle = `rgba(0,0,0,${dark})`;
   x.fillRect(px, py + h - size, w, size);
   x.fillRect(px + w - size, py, size, h);
-}
-
-// Derive a tangent-space normal map from the brightness of an albedo canvas.
-function normalMap(src, strength) {
-  const w = src.width, h = src.height;
-  const d = src.getContext('2d').getImageData(0, 0, w, h).data;
-  const lum = new Float32Array(w * h);
-  for (let i = 0; i < w * h; i++) lum[i] = (d[i * 4] * .3 + d[i * 4 + 1] * .59 + d[i * 4 + 2] * .11) / 255;
-  return makeCanvas(w, (x) => {
-    const img = x.createImageData(w, h), o = img.data;
-    const L = (i, j) => lum[((j + h) % h) * w + ((i + w) % w)];
-    for (let j = 0; j < h; j++) {
-      for (let i = 0; i < w; i++) {
-        const dx = (L(i + 1, j) - L(i - 1, j)) * strength;
-        const dy = (L(i, j + 1) - L(i, j - 1)) * strength;
-        const len = Math.hypot(dx, dy, 1), p = (j * w + i) * 4;
-        o[p] = (-dx / len * .5 + .5) * 255;
-        o[p + 1] = (dy / len * .5 + .5) * 255;
-        o[p + 2] = (1 / len * .5 + .5) * 255;
-        o[p + 3] = 255;
-      }
-    }
-    x.putImageData(img, 0, 0);
-  }, h);
-}
-
-export function texture(c, srgb = true) {
-  const t = new THREE.CanvasTexture(c);
-  t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  t.anisotropy = 8;
-  if (srgb) t.colorSpace = THREE.SRGBColorSpace;
-  return t;
 }
 
 // ---------------------------------------------------------------- surfaces
@@ -587,167 +555,133 @@ function paintDoor(stripe, glow, skull) {
   return [albedo, emissive];
 }
 
-export function paintGlow(inner = 'rgba(255,255,255,1)', mid = 'rgba(255,255,255,.5)') {
-  return makeCanvas(64, (x) => {
-    const g = x.createRadialGradient(32, 32, 0, 32, 32, 32);
-    g.addColorStop(0, inner);
-    g.addColorStop(.3, mid);
-    g.addColorStop(1, 'rgba(255,255,255,0)');
-    x.fillStyle = g;
-    x.fillRect(0, 0, 64, 64);
-  });
-}
+// ---------------------------------------------------------------- pixel art
 
-function paintHole() {
-  return makeCanvas(64, (x) => {
-    const g = x.createRadialGradient(32, 32, 0, 32, 32, 30);
-    g.addColorStop(0, 'rgba(0,0,0,1)');
-    g.addColorStop(.25, 'rgba(8,6,5,.95)');
-    g.addColorStop(.45, 'rgba(30,20,15,.6)');
-    g.addColorStop(1, 'rgba(0,0,0,0)');
-    x.fillStyle = g;
-    x.fillRect(0, 0, 64, 64);
-  });
-}
+// Texels per metre. Textures tile every `size / TEXEL` metres.
+export const TEXEL = 32;
 
-function paintSmoke() {
-  return makeCanvas(64, (x) => {
-    for (let i = 0; i < 14; i++) {
-      const px = 20 + rand() * 24, py = 20 + rand() * 24, r = 10 + rand() * 14;
-      const g = x.createRadialGradient(px, py, 0, px, py, r);
-      g.addColorStop(0, 'rgba(255,255,255,.35)');
-      g.addColorStop(1, 'rgba(255,255,255,0)');
-      x.fillStyle = g;
-      x.fillRect(0, 0, 64, 64);
+const byte = (v) => (v <= 0 ? 0 : v >= 255 ? 255 : v | 0);
+
+// Average `factor`×`factor` blocks of a canvas. Exact box filtering keeps the
+// tiles seamless, which canvas scaling does not.
+function shrink(canvas, size) {
+  const n = canvas.width, f = n / size;
+  const src = canvas.getContext('2d').getImageData(0, 0, n, n).data, out = new Float32Array(size * size * 3);
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      const s = (y * n + x) * 4, o = (((y / f) | 0) * size + ((x / f) | 0)) * 3;
+      out[o] += src[s];
+      out[o + 1] += src[s + 1];
+      out[o + 2] += src[s + 2];
     }
-  });
+  }
+  for (let i = 0; i < out.length; i++) out[i] /= f * f;
+  return out;
 }
 
-// ---------------------------------------------------------------- materials
-
-function surface(albedo, strength, opts = {}, scale = 2) {
-  const m = new THREE.MeshStandardMaterial({
-    map: texture(albedo),
-    normalMap: texture(normalMap(albedo, strength), false),
-    roughness: .8,
-    metalness: 0,
-    ...opts,
-  });
-  m.userData.scale = scale;
-  return m;
+// A texture is `size`² texels packed as 0xBBGGRR; bit 24 marks a fullbright
+// texel that ignores lighting (lamps, glowing trim, lava).
+function pixels(albedo, size, { emissive = null, gain = 1, bright = false } = {}) {
+  const a = shrink(albedo, size), e = emissive ? shrink(emissive, size) : null;
+  const data = new Uint32Array(size * size);
+  for (let i = 0; i < size * size; i++) {
+    let r = a[i * 3] * gain, g = a[i * 3 + 1] * gain, b = a[i * 3 + 2] * gain, full = bright;
+    if (e && e[i * 3] + e[i * 3 + 1] + e[i * 3 + 2] > 160) {
+      r = Math.max(r, e[i * 3]);
+      g = Math.max(g, e[i * 3 + 1]);
+      b = Math.max(b, e[i * 3 + 2]);
+      full = true;
+    }
+    data[i] = (full ? 0x1000000 : 0) | (byte(b) << 16) | (byte(g) << 8) | byte(r);
+  }
+  return { size, mask: size - 1, data };
 }
 
-export function createMaterials() {
+export function createTextures() {
   const [techA, techE] = paintTech();
   const [ceilA, ceilE] = paintCeiling();
-  const lavaTex = texture(paintLava());
   const door = (stripe, glow, skull) => {
     const [a, e] = paintDoor(stripe, glow, skull);
-    return new THREE.MeshStandardMaterial({
-      map: texture(a),
-      normalMap: texture(normalMap(a, 4), false),
-      emissiveMap: texture(e),
-      emissive: 0xffffff,
-      emissiveIntensity: 2.5,
-      roughness: .45,
-      metalness: .5,
-    });
+    return pixels(a, 64, { emissive: e, gain: 1.2 });
   };
-
-  const lava = new THREE.MeshBasicMaterial({ map: lavaTex, color: new THREE.Color(2.4, 2.4, 2.4) });
-  lava.userData.scale = 3;
-  const slimeTex = texture(paintSlime());
-  const slime = new THREE.MeshBasicMaterial({ map: slimeTex, color: new THREE.Color(1.8, 2.2, 1.8) });
-  slime.userData.scale = 3;
-
-  const materials = {
-    stone: surface(paintStone(), 5, { roughness: .92 }),
-    metalFloor: surface(paintMetalFloor(), 4, { roughness: .5, metalness: .45 }),
-    panel: surface(paintPanel(), 4, { roughness: .45, metalness: .55 }),
-    tech: surface(techA, 4, {
-      roughness: .4,
-      metalness: .55,
-      emissiveMap: texture(techE),
-      emissive: 0xffffff,
-      emissiveIntensity: 3,
-    }),
-    ceiling: surface(ceilA, 3, {
-      roughness: .6,
-      metalness: .4,
-      emissiveMap: texture(ceilE),
-      emissive: 0xffffff,
-      emissiveIntensity: 1.2,
-    }, 4),
-    rock: surface(paintRock(), 6, { roughness: .95 }, 4),
-    crate: surface(paintCrate(), 4, { roughness: .75 }, 1),
-    grate: surface(paintGrate(), 5, { roughness: .45, metalness: .6 }, 1),
-    lava,
-    slime,
-    pipes: surface(paintPipes(), 5, { roughness: .42, metalness: .6 }),
-    flesh: surface(paintFlesh(), 6, { roughness: .32 }),
-    bone: surface(paintBone(), 6, { roughness: .6 }),
-    blood: surface(paintBlood(), 3, { roughness: .22 }),
+  return {
+    stone: pixels(paintStone(), 64, { gain: 1.25 }),
+    metalFloor: pixels(paintMetalFloor(), 64, { gain: 1.2 }),
+    panel: pixels(paintPanel(), 64, { gain: 1.2 }),
+    tech: pixels(techA, 64, { emissive: techE, gain: 1.2 }),
+    ceiling: pixels(ceilA, 128, { emissive: ceilE, gain: 1.2 }),
+    rock: pixels(paintRock(), 128, { gain: 1.3 }),
+    crate: pixels(paintCrate(), 32, { gain: 1.2 }),
+    grate: pixels(paintGrate(), 32, { gain: 1.25 }),
+    lava: pixels(paintLava(), 128, { gain: 1.25, bright: true }),
+    slime: pixels(paintSlime(), 128, { gain: 1.15, bright: true }),
+    pipes: pixels(paintPipes(), 64, { gain: 1.2 }),
+    // Bigger shapes for the organic walls: at 64 texels they turn to noise.
+    flesh: pixels(paintFlesh(), 128, { gain: 1.3 }),
+    bone: pixels(paintBone(), 128, { gain: 1.1 }),
+    blood: pixels(paintBlood(), 64, { gain: 1.3 }),
     doorPlain: door('#d8a020', '#c8d0d8', false),
     doorRed: door('#c81e14', '#ff2a18', false),
     doorBlue: door('#1e4ad8', '#3a8aff', false),
     doorYellow: door('#e0a818', '#ffd040', false),
     doorBoss: door('#6a0a06', '#ff3010', true),
   };
-
-  return {
-    materials,
-    lavaTex,
-    slimeTex,
-    glow: texture(paintGlow()),
-    softGlow: texture(paintGlow('rgba(255,255,255,.9)', 'rgba(255,255,255,.25)')),
-    hole: texture(paintHole()),
-    smoke: texture(paintSmoke()),
-  };
 }
 
 // ---------------------------------------------------------------- sky
 
+function hash2(x, y) {
+  let h = (Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263)) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+function noise2(x, y) {
+  const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi;
+  const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+  const a = hash2(xi, yi), b = hash2(xi + 1, yi), c = hash2(xi, yi + 1), d = hash2(xi + 1, yi + 1);
+  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+}
+
+function fbm2(x, y) {
+  let v = 0, a = .5;
+  for (let i = 0; i < 5; i++) {
+    v += a * noise2(x, y);
+    x = x * 2.03 + 17.1;
+    y = y * 2.03 + 3.7;
+    a *= .5;
+  }
+  return v;
+}
+
+const smoothstep = (a, b, t) => {
+  const x = Math.min(1, Math.max(0, (t - a) / (b - a)));
+  return x * x * (3 - 2 * x);
+};
+
+// A burning hell sky wrapped around the horizon. Row 0 is SKY_TOP above the
+// horizon and the last row SKY_BOTTOM below it; columns run once around.
+export const SKY_TOP = 1.25, SKY_BOTTOM = -.2;
+
 export function createSky() {
-  const material = new THREE.ShaderMaterial({
-    side: THREE.BackSide,
-    depthWrite: false,
-    fog: false,
-    uniforms: { time: { value: 0 } },
-    vertexShader: /* glsl */`
-      varying vec3 vDir;
-      void main() {
-        vDir = normalize(position);
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      }`,
-    fragmentShader: /* glsl */`
-      uniform float time;
-      varying vec3 vDir;
-      float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-      float noise(vec2 p) {
-        vec2 i = floor(p), f = fract(p);
-        f = f * f * (3.0 - 2.0 * f);
-        return mix(mix(hash(i), hash(i + vec2(1, 0)), f.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), f.x), f.y);
-      }
-      float fbm(vec2 p) {
-        float v = 0.0, a = 0.5;
-        for (int i = 0; i < 5; i++) { v += a * noise(p); p *= 2.03; a *= 0.5; }
-        return v;
-      }
-      void main() {
-        vec3 d = normalize(vDir);
-        float h = clamp(d.y, 0.0, 1.0);
-        vec2 uv = d.xz / (d.y + 0.3) * 1.4;
-        float c = fbm(uv + vec2(time * 0.015, time * 0.008));
-        float c2 = fbm(uv * 2.3 - vec2(time * 0.025, 0.0));
-        vec3 low = vec3(0.7, 0.14, 0.03), high = vec3(0.06, 0.008, 0.01);
-        vec3 col = mix(low, high, pow(h, 0.55));
-        col += vec3(1.2, 0.35, 0.06) * smoothstep(0.5, 0.95, c) * (1.0 - h * 0.5);
-        col *= 0.55 + 0.7 * c2;
-        gl_FragColor = vec4(col, 1.0);
-      }`,
-  });
-  const mesh = new THREE.Mesh(new THREE.SphereGeometry(90, 32, 16), material);
-  mesh.renderOrder = -1;
-  mesh.frustumCulled = false;
-  return mesh;
+  const w = 1024, h = 192, data = new Uint32Array(w * h);
+  for (let y = 0; y < h; y++) {
+    const el = SKY_TOP + (SKY_BOTTOM - SKY_TOP) * (y / (h - 1)), dy = Math.sin(el), ch = Math.cos(el);
+    const up = Math.max(0, dy);
+    for (let x = 0; x < w; x++) {
+      const az = x / w * Math.PI * 2, dx = Math.sin(az) * ch, dz = Math.cos(az) * ch;
+      const k = 1.4 / (Math.max(dy, 0) + .3);
+      const c = fbm2(dx * k, dz * k), c2 = fbm2(dx * k * 2.3 + 40, dz * k * 2.3);
+      const m = Math.pow(up, .55), cloud = smoothstep(.42, .8, c) * (1 - up * .4), shade = .35 + 1.1 * c2;
+      let r = (.7 + (.06 - .7) * m + 1.2 * cloud) * shade;
+      let g = (.14 + (.008 - .14) * m + .35 * cloud) * shade;
+      let b = (.03 + (.01 - .03) * m + .06 * cloud) * shade;
+      // Rough filmic curve and gamma, to match the old tone-mapped sky.
+      r = Math.sqrt(r / (1 + r * .45));
+      g = Math.sqrt(g / (1 + g * .45));
+      b = Math.sqrt(b / (1 + b * .45));
+      data[y * w + x] = (byte(b * 255) << 16) | (byte(g * 255) << 8) | byte(r * 255);
+    }
+  }
+  return { w, h, data };
 }

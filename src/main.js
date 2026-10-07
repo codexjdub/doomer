@@ -1,46 +1,38 @@
 // Doomer: game setup, main loop and the glue between systems.
-import * as THREE from 'three';
-import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { createMaterials, createSky } from './textures.js';
+import { Renderer } from './renderer.js';
 import { Level } from './level.js';
 import { LEVELS } from './levels.js';
-import { Particles, Decals, Debris, LightPool } from './effects.js';
+import { Particles, Gibs, Blasts, Lights } from './effects.js';
 import { Sound } from './audio.js';
 import { Music } from './music.js';
 import { Enemy, Projectile, rayCylinder } from './enemies.js';
-import { prebake } from './monsters.js';
+import { MONSTER_TYPES } from './monsters.js';
+import { bakeMonster, monsterSprite } from './sprites.js';
+import { gibSprites, explosionSprites, fireballSprites, skullFlameSprites } from './art.js';
 import { Arsenal } from './weapons.js';
-import { Item, ITEMS, MAX, addLamp, Torch, ExitPad } from './items.js';
+import { Item, ITEMS, MAX, Lamp, Torch, ExitPad } from './items.js';
 import { Player } from './player.js';
 import { Hud } from './hud.js';
 import { Input } from './input.js';
 import { Automap } from './automap.js';
+import { Vec3 } from './vec.js';
 
-const QUALITY = {
-  low: { pixelRatio: .75, shadows: 0, bloom: false, smaa: false },
-  medium: { pixelRatio: 1, shadows: 1, bloom: true, smaa: false },
-  high: { pixelRatio: 1.5, shadows: 2, bloom: true, smaa: true },
-};
-
-// Menus stay light: the title flythrough draws at 30 fps without bloom or SMAA,
-// the pause, death and win screens hold their last frame, and nothing draws
-// once the window loses focus or sits a minute without input.
+// Menus stay light: the title flythrough draws at 30 fps, the pause, death
+// and win screens hold their last frame, and nothing draws once the window
+// loses focus or sits a minute without input.
 const MENU_FPS = 30;
 const IDLE_MS = 60000;
 const FROZEN = new Set(['paused', 'dead', 'won']);
 
 const SETTINGS_KEY = 'doomer.settings';
 const PROGRESS_KEY = 'doomer.progress';
-const DEFAULTS = { quality: 'high', sensitivity: 1, volume: .7, music: .5, minimap: true };
+const DEFAULTS = { pixels: 1, sensitivity: 1, volume: .7, music: .5, minimap: true };
 
 function loadSettings() {
   try {
-    return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') };
+    const s = { ...DEFAULTS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') };
+    if (s.pixels !== 1 && s.pixels !== 2) s.pixels = 1;
+    return s;
   } catch {
     return { ...DEFAULTS };
   }
@@ -63,51 +55,20 @@ const HAZARD = {
 
 const randInt = ([a, b]) => a + Math.floor(Math.random() * (b - a + 1));
 const fmtTime = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+// Let the page repaint between slow loading steps.
+const breathe = () => new Promise((r) => setTimeout(r, 16));
 
 class Game {
   constructor() {
     this.settings = loadSettings();
     this.canvas = document.getElementById('game');
-    const renderer = this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: false, powerPreference: 'high-performance' });
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer = new Renderer(this.canvas);
+    this.renderer.setScale(this.settings.pixels);
+    this.cam = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0 };
 
-    this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x060303);
-    this.scene.fog = new THREE.FogExp2(0x0a0504, .028);
-    this.camera = new THREE.PerspectiveCamera(74, innerWidth / innerHeight, .05, 200);
-    this.camera.rotation.order = 'YXZ';
-
-    const pmrem = new THREE.PMREMGenerator(renderer);
-    this.envMap = pmrem.fromScene(new RoomEnvironment(), .04).texture;
-    pmrem.dispose();
-    this.scene.environment = this.envMap;
-    this.scene.environmentIntensity = .12;
-    this.hemi = new THREE.HemisphereLight(0x606880, 0x281810, .45);
-    this.scene.add(this.hemi);
-
-    this.tex = createMaterials();
-    prebake();
-    this.sky = createSky();
-    this.scene.add(this.sky);
-
-    this.lights = new LightPool(this.scene, 10, 2);
-    this.fire = new Particles(this.scene, 2500, this.tex.glow, true);
-    this.dust = new Particles(this.scene, 1500, this.tex.smoke, false);
-    this.decals = new Decals(this.scene, this.tex.hole);
-    this.debris = new Debris(this.scene, null);
-    this.fx = {
-      ballGeo: new THREE.SphereGeometry(1, 14, 10),
-      ballMat: new THREE.MeshBasicMaterial({ color: new THREE.Color(6, 3.4, 1.2) }),
-      haloMat: new THREE.SpriteMaterial({
-        map: this.tex.glow,
-        color: new THREE.Color(3, 1.1, .3),
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        transparent: true,
-      }),
-    };
+    this.lights = new Lights();
+    this.fire = new Particles(2500, true);
+    this.dust = new Particles(1500, false);
     this.flashes = [];
 
     this.sound = new Sound();
@@ -116,26 +77,22 @@ class Game {
     this.music.setVolume(this.settings.music);
     this.player = new Player();
     this.arsenal = new Arsenal(this);
-    this.arsenal.setEnvironment(this.envMap);
     this.hud = new Hud(this);
     this.input = new Input(this);
     this.automap = new Automap(this);
     this.automap.setMini(this.settings.minimap);
     this.progress = loadProgress();
 
-    this.state = 'title';
+    this.state = 'loading';
     this.running = false;
     this.enemies = [];
     this.items = [];
     this.projectiles = [];
     this.props = [];
-    this.levelObjects = [];
     this.time = 0;
     this.emberAcc = 0;
-    this.loadLevel(0);
-    this.applyQuality(this.settings.quality);
     addEventListener('resize', () => {
-      this.resize();
+      this.renderer.resize();
       this.wake(true);
     });
     document.addEventListener('visibilitychange', () => {
@@ -144,59 +101,61 @@ class Game {
     });
     for (const type of ['mousemove', 'mousedown', 'keydown', 'wheel', 'focus']) addEventListener(type, () => this.wake(), { passive: true });
     addEventListener('blur', () => { this.lastInput = -Infinity; });
+  }
 
-    // Compile shaders up front so the first frames don't hitch.
-    this.renderer.compile(this.scene, this.camera);
+  // Bake the monster sprites (a few seconds), then show the title screen
+  // over the first level.
+  async init() {
+    for (let i = 0; i < MONSTER_TYPES.length; i++) {
+      this.hud.loading(i / MONSTER_TYPES.length);
+      await breathe();
+      bakeMonster(MONSTER_TYPES[i]);
+    }
+    this.gibs = new Gibs(gibSprites());
+    this.blasts = new Blasts(explosionSprites());
+    this.ballArt = { small: fireballSprites(false), big: fireballSprites(true) };
+    this.flameArt = skullFlameSprites();
+    this.loadLevel(0);
+    this.state = 'title';
     this.wake();
     this.hud.showScreen('title');
     this.hud.ready();
     this.hud.buildLevels(LEVELS, this.progress.unlocked);
   }
 
-  // Swap in a level: tear down the old geometry, props and lights, build the
-  // new ones, then spawn everything. `loadout` is what the player carries in.
+  // Swap in a level: build its cells and props, bake its lighting, then
+  // spawn everything. `loadout` is what the player carries in.
   loadLevel(index, loadout = null) {
-    const def = LEVELS[index];
-    for (const o of this.levelObjects) {
-      this.scene.remove(o);
-      o.geometry?.dispose();
-    }
+    const def = LEVELS[index], t = def.theme;
     this.lights.clear();
     this.levelIndex = index;
     this.def = def;
     this.level = new Level(def.build(), def.presets);
-    this.debris.level = this.level;
-    this.levelObjects = this.level.build(this.tex.materials);
-    for (const m of this.levelObjects) this.scene.add(m);
+    this.gibs.level = this.level;
+    this.renderer.setLevel(this.level, t);
 
-    const t = def.theme;
-    this.scene.fog.color.set(t.fog);
-    this.scene.fog.density = t.density;
-    this.scene.background.set(t.fog).multiplyScalar(.6);
-    this.hemi.color.set(t.hemi[0]);
-    this.hemi.groundColor.set(t.hemi[1]);
-    this.hemi.intensity = t.hemi[2];
-
+    const baked = [];
     this.hazardCells = this.level.cells.filter((c) => c.lava);
     for (const c of this.hazardCells) {
       if (c.x % 3 === 0 && c.z % 3 === 0) {
-        const light = HAZARD[c.slime ? 'slime' : 'lava'].light;
-        this.lights.add({ pos: new THREE.Vector3(c.x + .5, c.floor + 1, c.z + .5), color: light, intensity: 18, range: 7, flicker: .6 });
+        baked.push({ x: c.x + .5, y: c.floor + 1, z: c.z + .5, color: HAZARD[c.slime ? 'slime' : 'lava'].light, intensity: 18, range: 7, flicker: true });
       }
     }
-    for (const [x, y, z, color, intensity, range] of def.lights || []) {
-      this.lights.add({ pos: new THREE.Vector3(x, y, z), color, intensity, range });
-    }
+    for (const [x, y, z, color, intensity, range] of def.lights || []) baked.push({ x, y, z, color, intensity, range });
     this.props = [];
     this.exitPad = null;
     for (const e of this.level.entities) {
       let prop = null;
-      if (e.type === 'L') prop = addLamp(this, e.x, this.level.at(e.x, e.z).ceil, e.z, t.lamp);
-      if (e.type === 'F') this.props.push(prop = new Torch(this, e.x, e.y, e.z));
-      if (e.type === 'X') this.props.push(prop = this.exitPad = new ExitPad(this, e.x, e.y, e.z));
-      if (prop) this.levelObjects.push(prop.root);
+      if (e.type === 'L') prop = new Lamp(this, e.x, this.level.at(e.x, e.z).ceil, e.z, t.lamp);
+      if (e.type === 'F') prop = new Torch(this, e.x, e.y, e.z);
+      if (e.type === 'X') prop = this.exitPad = new ExitPad(this, e.x, e.y, e.z);
+      if (prop) {
+        this.props.push(prop);
+        baked.push(prop.light);
+      }
     }
-    this.muzzle = this.lights.add({ pos: new THREE.Vector3(), color: 0xffb060, intensity: 0, range: 10, dynamic: true });
+    this.renderer.bakeLights(baked);
+    this.muzzle = this.lights.add({ pos: new Vec3(), color: 0xffb060, intensity: 0, range: 10 });
     this.automap.setLevel(this.level);
     this.startLoadout = loadout;
     this.reset();
@@ -225,50 +184,11 @@ class Game {
     } catch {
       // Storage can be unavailable (private mode); settings just won't persist.
     }
-    if (key === 'quality') this.applyQuality(value);
+    if (key === 'pixels') this.renderer.setScale(value);
     if (key === 'volume') this.sound.setVolume(value);
     if (key === 'music') this.music.setVolume(value);
     if (key === 'minimap') this.automap.setMini(value);
-    if (key === 'quality' || key === 'minimap') this.wake(true);
-  }
-
-  applyQuality(name) {
-    const Q = QUALITY[name] || QUALITY.high;
-    this.pixelRatio = Math.min(devicePixelRatio || 1, Q.pixelRatio);
-    this.renderer.setPixelRatio(this.pixelRatio);
-    this.renderer.shadowMap.enabled = Q.shadows > 0;
-    this.lights.setShadows(Q.shadows > 0, Q.shadows);
-    this.scene.traverse((o) => {
-      if (o.material) for (const m of [].concat(o.material)) m.needsUpdate = true;
-    });
-
-    this.composer?.dispose();
-    const w = innerWidth, h = innerHeight;
-    const c = new EffectComposer(this.renderer);
-    c.addPass(new RenderPass(this.scene, this.camera));
-    this.weaponPass = new RenderPass(this.arsenal.scene, this.arsenal.camera);
-    this.weaponPass.clear = false;
-    this.weaponPass.clearDepth = true;
-    c.addPass(this.weaponPass);
-    this.bloomPass = Q.bloom ? new UnrealBloomPass(new THREE.Vector2(w, h), .6, .5, .9) : null;
-    if (this.bloomPass) c.addPass(this.bloomPass);
-    c.addPass(new OutputPass());
-    this.smaaPass = Q.smaa ? new SMAAPass(w * this.pixelRatio, h * this.pixelRatio) : null;
-    if (this.smaaPass) c.addPass(this.smaaPass);
-    this.composer = c;
-    this.resize();
-  }
-
-  resize() {
-    const w = innerWidth, h = innerHeight;
-    this.renderer.setSize(w, h, false);
-    this.composer.setPixelRatio(this.pixelRatio);
-    this.composer.setSize(w, h);
-    this.camera.aspect = w / h;
-    this.camera.updateProjectionMatrix();
-    this.arsenal.sync(this.camera);
-    this.fire.setScale(h * this.pixelRatio, this.camera.fov);
-    this.dust.setScale(h * this.pixelRatio, this.camera.fov);
+    if (key === 'pixels' || key === 'minimap') this.wake(true);
   }
 
   // ------------------------------------------------------------ flow
@@ -283,8 +203,8 @@ class Game {
     this.projectiles = [];
     this.flashes = [];
     this.boss = null;
-    this.debris.clear();
-    this.decals.clear();
+    this.gibs.clear();
+    this.blasts.clear();
     this.fire.clear();
     this.dust.clear();
     this.level.resetDoors();
@@ -299,7 +219,7 @@ class Game {
         if (e.type === 'W') this.boss = m;
       } else if (ITEMS[e.type]) this.items.push(new Item(this, e.type, e.x, e.y, e.z));
     }
-    if (this.boss) this.boss.model.root.rotation.y = this.boss.yaw = this.def.bossYaw ?? -Math.PI / 2;
+    if (this.boss) this.boss.yaw = this.def.bossYaw ?? -Math.PI / 2;
     this.player.reset(spawn, this.startLoadout);
     this.arsenal.reset();
     this.stats = { kills: 0, total: this.enemies.length, time: 0 };
@@ -315,6 +235,7 @@ class Game {
   }
 
   action(name) {
+    if (this.state === 'loading') return;
     if (name === 'play') this.startLevel(this.progress.unlocked - 1);
     if (name.startsWith('level:')) this.startLevel(parseInt(name.slice(6), 10));
     if (name === 'resume') this.resume();
@@ -405,7 +326,7 @@ class Game {
   // flythrough; the frozen screens redraw one frame when `redraw` is set.
   wake(redraw = false) {
     this.lastInput = performance.now();
-    if (this.running || (!redraw && FROZEN.has(this.state))) return;
+    if (this.state === 'loading' || this.running || (!redraw && FROZEN.has(this.state))) return;
     this.running = true;
     this.last = performance.now();
     requestAnimationFrame(this.frame);
@@ -423,7 +344,7 @@ class Game {
     if (!menu) this.update(dt);
     else if (this.state === 'title') this.attract(dt);
     else this.input.consumeLook();
-    this.render(dt);
+    this.render();
   };
 
   update(dt) {
@@ -480,7 +401,7 @@ class Game {
     }
     // Embers drifting up from nearby lava, bubbles off the slime.
     this.emberAcc += dt * 70;
-    const cam = this.camera.position;
+    const cam = this.cam;
     while (this.emberAcc > 1 && this.hazardCells.length) {
       this.emberAcc--;
       const c = this.hazardCells[(Math.random() * this.hazardCells.length) | 0];
@@ -492,15 +413,21 @@ class Game {
     }
     this.fire.update(dt);
     this.dust.update(dt);
-    this.debris.update(dt);
+    this.gibs.update(dt);
+    this.blasts.update(dt);
   }
 
+  // The title screen: drift slowly through the first level.
   attract(dt) {
     this.input.consumeLook();
-    const t = this.time * .12, a = this.def.attract;
+    const t = this.time * .12, a = this.def.attract, cam = this.cam;
     if (a) {
-      this.camera.position.set(a.from[0] + Math.sin(t) * 3, a.from[1] + Math.sin(t * .7) * .3, a.from[2] + Math.cos(t * .8) * 1.2);
-      this.camera.lookAt(a.to[0] + Math.sin(t * .5) * 2.5, a.to[1], a.to[2]);
+      cam.x = a.from[0] + Math.sin(t) * 3;
+      cam.y = a.from[1] + Math.sin(t * .7) * .3;
+      cam.z = a.from[2] + Math.cos(t * .8) * 1.2;
+      const tx = a.to[0] + Math.sin(t * .5) * 2.5 - cam.x, ty = a.to[1] - cam.y, tz = a.to[2] - cam.z;
+      cam.yaw = Math.atan2(-tx, -tz);
+      cam.pitch = Math.atan2(ty, Math.hypot(tx, tz));
     }
     for (const e of this.enemies) {
       if (e.dead) continue;
@@ -511,23 +438,51 @@ class Game {
     this.updateEffects(dt);
   }
 
-  render(dt) {
-    if (this.state !== 'title') this.player.applyCamera(this.camera, this.time);
-    this.sky.position.copy(this.camera.position);
-    this.sky.material.uniforms.time.value = this.time;
-    this.tex.lavaTex.offset.set(this.time * .03, Math.sin(this.time * .4) * .06);
-    this.tex.slimeTex.offset.set(Math.sin(this.time * .3) * .08, this.time * .02);
-    const L = this.sound.listener;
-    L.x = this.camera.position.x;
-    L.z = this.camera.position.z;
-    L.yaw = this.camera.rotation.y;
-    this.lights.update(this.camera, this.time, dt);
-    const full = this.state !== 'title';
-    this.weaponPass.enabled = full;
-    if (this.bloomPass) this.bloomPass.enabled = full;
-    if (this.smaaPass) this.smaaPass.enabled = full;
-    this.composer.render(dt);
+  render() {
+    const R = this.renderer, cam = this.cam, playing = this.state !== 'title';
+    if (playing) this.player.applyCamera(cam);
+    R.updateLightmap(this.time);
+    R.setDynamicLights(this.lights.active(cam, this.time));
+    R.begin(cam, this.time, !playing);
+    R.drawWorld();
+    for (const pr of this.props) pr.draw(R);
+    for (const it of this.items) it.draw(R);
+    for (const e of this.enemies) this.drawEnemy(e);
+    for (const pr of this.projectiles) {
+      const art = pr.big ? this.ballArt.big : this.ballArt.small;
+      R.drawSprite(art[((pr.age * 14) | 0) % art.length], pr.pos.x, pr.pos.y, pr.pos.z);
+    }
+    this.gibs.draw(R);
+    this.blasts.draw(R);
+    this.dust.draw(R);
+    this.fire.draw(R);
+    if (playing) {
+      const L = R.light(cam.x, cam.y, cam.z);
+      this.arsenal.draw(R, [L[0], L[1], L[2]]);
+      this.hud.draw(R);
+    }
+    R.present();
+    const listener = this.sound.listener;
+    listener.x = cam.x;
+    listener.z = cam.z;
+    listener.yaw = cam.yaw;
     this.automap.draw();
+  }
+
+  // A monster's picture for the angle it is seen from; burning skulls get
+  // their flames drawn just behind them.
+  drawEnemy(e) {
+    if (e.gone) return;
+    const R = this.renderer, cam = this.cam;
+    const rel = Math.atan2(cam.x - e.pos.x, cam.z - e.pos.z) - e.yaw;
+    const { sprite, flip } = monsterSprite(e.type, e.show.anim, e.show.frame, rel);
+    const x = e.pos.x + e.jitter.x, y = e.pos.y + e.jitter.y, z = e.pos.z;
+    R.drawSprite(sprite, x, y, z, flip, e.flash > 0 ? .6 : 0);
+    if (e.def.fly && !e.dead) {
+      const vx = x - cam.x, vz = z - cam.z, l = Math.hypot(vx, vz) || 1;
+      const art = this.flameArt[((this.time * 12 + e.seed) | 0) % this.flameArt.length];
+      R.drawSprite(art, x + vx / l * .14, y + .12, z + vz / l * .14);
+    }
   }
 
   // Explore music by default; combat while awake monsters are near (held for a
@@ -621,12 +576,12 @@ class Game {
     return true;
   }
 
+  // Hitscan along the crosshair: pellets spread around it, hit the nearest
+  // monster or wall.
   fireWeapon(w) {
-    const cam = this.camera, origin = cam.position.clone();
-    const fwd = new THREE.Vector3();
-    cam.getWorldDirection(fwd);
-    const right = new THREE.Vector3().crossVectors(fwd, cam.up).normalize();
-    const up = new THREE.Vector3().crossVectors(right, fwd);
+    const p = this.player, origin = p.eye(), fwd = p.aim();
+    const right = new Vec3(Math.cos(p.yaw), 0, -Math.sin(p.yaw));
+    const up = new Vec3(right.y * fwd.z - right.z * fwd.y, right.z * fwd.x - right.x * fwd.z, right.x * fwd.y - right.y * fwd.x);
     const hits = new Map();
     for (let i = 0; i < w.pellets; i++) {
       const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * w.spread;
@@ -646,7 +601,6 @@ class Game {
         hits.set(target, (hits.get(target) || 0) + randInt(w.dmg));
         this.blood(pt.x, pt.y, pt.z, 10, 2.4, dir);
       } else if (wall) {
-        this.decals.add(wall.point, wall.normal);
         this.sparks(wall.point, wall.normal);
       }
     }
@@ -673,7 +627,7 @@ class Game {
     this.stats.kills++;
     if (e === this.boss) {
       for (let i = 0; i < 5; i++) {
-        const p = e.pos.clone().add(new THREE.Vector3((Math.random() - .5) * 3, 1 + Math.random() * 4, (Math.random() - .5) * 3));
+        const p = e.pos.clone().add(new Vec3((Math.random() - .5) * 3, 1 + Math.random() * 4, (Math.random() - .5) * 3));
         setTimeout(() => this.explosion(p, true, false), i * 180);
       }
       for (const d of this.level.doors) if (d.type === 'boss') d.target = d.height;
@@ -685,7 +639,7 @@ class Game {
   // ------------------------------------------------------------ effects
 
   flash(pos, color, peak, range, len) {
-    const light = this.lights.add({ pos: pos.clone(), color, intensity: peak, range, dynamic: true });
+    const light = this.lights.add({ pos: pos.clone(), color, intensity: peak, range });
     this.flashes.push({ light, peak, t: len, len });
   }
 
@@ -711,8 +665,9 @@ class Game {
 
   explosion(pos, big, damage = true) {
     const n = big ? 42 : 26, f = big ? 5 : 3.5;
+    this.blasts.add(pos, big);
     for (let i = 0; i < n; i++) {
-      const v = new THREE.Vector3(Math.random() - .5, Math.random() - .5, Math.random() - .5).normalize().multiplyScalar(f * (.3 + Math.random()));
+      const v = new Vec3(Math.random() - .5, Math.random() - .5, Math.random() - .5).normalize().multiplyScalar(f * (.3 + Math.random()));
       this.fire.spawn(pos.x, pos.y, pos.z, v.x, v.y, v.z, .3 + Math.random() * .35, (big ? 1.1 : .7) * (.6 + Math.random() * .6), .1, 4, 1.5, .35, 1, -1.5, 3);
     }
     for (let i = 0; i < (big ? 10 : 5); i++) {
@@ -739,13 +694,17 @@ class Game {
 }
 
 function boot() {
-  try {
-    window.game = new Game();
-  } catch (err) {
+  const fail = (err) => {
     console.error(err);
     const b = document.querySelector('[data-action="play"]');
-    b.textContent = 'WebGL is not available';
-    document.querySelector('#screen-title .tag').textContent = 'Doomer needs a browser with WebGL 2. Try a recent Chrome, Firefox, Edge or Safari.';
+    b.textContent = 'Failed to start';
+    document.querySelector('#screen-title .tag').textContent = 'Something went wrong while loading. Reload the page to try again.';
+  };
+  try {
+    window.game = new Game();
+    window.game.init().catch(fail);
+  } catch (err) {
+    fail(err);
   }
 }
 

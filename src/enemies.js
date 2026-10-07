@@ -1,7 +1,8 @@
-// Monsters: sculpted models (see monsters.js), animated procedurally, and
-// driven by a small state machine (idle → chase → attack / pain → dead).
-import * as THREE from 'three';
-import { createMonster } from './monsters.js';
+// Monsters: baked pixel-art sprites (see sprites.js) driven by a small state
+// machine (idle → chase → attack / pain → dead). Each frame they report which
+// animation and frame to show; the game picks the picture for the angle it
+// is seen from.
+import { Vec3 } from './vec.js';
 
 export const TYPES = {
   imp: {
@@ -25,8 +26,8 @@ export const TYPES = {
 
 const randInt = ([a, b]) => a + Math.floor(Math.random() * (b - a + 1));
 const lerp = (a, b, t) => a + (b - a) * t;
-const tmp = new THREE.Vector3();
-const ZERO = [0, 0, 0];
+const tmp = new Vec3();
+const DEATH_FRAMES = 4, DEATH_TIME = .6;
 
 // ---------------------------------------------------------------- enemy
 
@@ -35,7 +36,7 @@ export class Enemy {
     this.type = type;
     this.def = TYPES[type];
     this.hp = this.def.hp;
-    this.pos = new THREE.Vector3(x, y, z);
+    this.pos = new Vec3(x, y, z);
     this.vy = 0;
     this.yaw = Math.random() * Math.PI * 2;
     this.state = 'idle';
@@ -50,33 +51,29 @@ export class Enemy {
     this.stuck = 0;
     this.seed = Math.random() * 10;
     this.dead = false;
-    this.model = createMonster(type);
-    this.model.root.scale.setScalar(this.def.scale);
-    this.model.root.position.copy(this.pos);
-    this.model.root.rotation.y = this.yaw;
-    this.bodyY = this.model.parts.body.position.y;
-    this.glowBase = this.model.material.userData.uniforms.glowStrength.value;
-    game.scene.add(this.model.root);
-    if (this.model.parts.core) {
-      this.glow = game.lights.add({ pos: new THREE.Vector3(), color: 0xff5020, intensity: 30, range: 9, flicker: 1 });
+    this.gone = false;
+    this.deadT = 0;
+    this.jitter = new Vec3();
+    this.show = { anim: 'idle', frame: 0 };
+    if (type === 'boss') {
+      this.glow = game.lights.add({ pos: new Vec3(), color: 0xff5020, intensity: 30, range: 9, flicker: 1 });
       this.glowHeight = 3.5;
     }
     if (this.def.fly) {
       this.hover = 1.05 + Math.random() * .3;
       this.pos.y += this.hover;
-      this.model.root.position.copy(this.pos);
-      this.glow = game.lights.add({ pos: new THREE.Vector3(), color: 0xff6a20, intensity: 5, range: 4, flicker: 1.5 });
+      this.glow = game.lights.add({ pos: new Vec3(), color: 0xff6a20, intensity: 5, range: 4, flicker: 1.5 });
       this.glowHeight = .36;
       this.trailAcc = 0;
     }
   }
 
   center() {
-    return new THREE.Vector3(this.pos.x, this.pos.y + this.def.height / 2, this.pos.z);
+    return new Vec3(this.pos.x, this.pos.y + this.def.height / 2, this.pos.z);
   }
 
   eye() {
-    return new THREE.Vector3(this.pos.x, this.pos.y + this.def.height * .85, this.pos.z);
+    return new Vec3(this.pos.x, this.pos.y + this.def.height * .85, this.pos.z);
   }
 
   wake(g) {
@@ -87,13 +84,16 @@ export class Enemy {
   }
 
   update(dt, g) {
-    if (this.dead) return;
+    if (this.dead) {
+      this.deadT += dt;
+      this.show.anim = 'death';
+      this.show.frame = Math.min(DEATH_FRAMES - 1, (this.deadT / DEATH_TIME * DEATH_FRAMES) | 0);
+      return;
+    }
     const p = g.player, T = this.def;
     this.anim += dt;
-    if (this.flash > 0) {
-      this.flash -= dt;
-      this.model.material.userData.uniforms.flash.value = this.flash > 0 ? .5 : 0;
-    }
+    this.flash = Math.max(0, this.flash - dt);
+    this.jitter.set(0, 0, 0);
     if (this.glow) this.glow.pos.copy(this.pos).setY(this.pos.y + this.glowHeight);
     if (T.fly) this.trail(dt, g);
 
@@ -116,10 +116,7 @@ export class Enemy {
 
     if (this.state === 'pain') {
       this.timer -= dt;
-      const k = Math.min(1, (.22 - this.timer) * 12);
-      this.pose('body', -.35 * k);
-      this.pose('head', -.3 * k, 0, .15 * k);
-      this.pose('jaw', .5 * k);
+      this.setShow('pain', 0);
       if (this.timer <= 0) this.state = 'chase';
       this.physics(dt, g, 0, 0);
       return;
@@ -247,8 +244,6 @@ export class Enemy {
       this.pos.y = span.floor;
       this.vy = 0;
     }
-    this.model.root.position.copy(this.pos);
-    this.model.root.rotation.y = this.yaw;
     return moved;
   }
 
@@ -285,8 +280,6 @@ export class Enemy {
     const span = L.span(this.pos.x, this.pos.z, r);
     const target = Math.min(span.floor + this.hover + Math.sin(this.anim * 2.2 + this.seed) * .12, span.ceil - T.height - .1);
     this.pos.y += (target - this.pos.y) * Math.min(1, dt * 3);
-    this.model.root.position.copy(this.pos);
-    this.model.root.rotation.y = this.yaw;
     return moved;
   }
 
@@ -295,13 +288,11 @@ export class Enemy {
     const p = g.player, L = g.level, T = this.def, toPlayer = Math.atan2(dx, dz);
     if (this.state === 'attack') {
       this.timer -= dt;
+      this.setShow('attack', 0);
       if (!this.dash) {
         this.turnTo(toPlayer, dt, 12);
-        this.pose('jaw', .6);
-        this.pulse(1.5 * (1 - this.timer / .5));
         this.flyPhysics(dt, g, 0, 0);
-        this.model.root.position.x += (Math.random() - .5) * .06;
-        this.model.root.position.y += (Math.random() - .5) * .06;
+        this.jitter.set((Math.random() - .5) * .06, (Math.random() - .5) * .06, 0);
         if (this.timer <= 0) {
           this.dash = p.eye().sub(this.center()).normalize().multiplyScalar(15);
           this.timer = 1.1;
@@ -314,16 +305,14 @@ export class Enemy {
       const hitWall = !L.open(next.x, mid, next.z) || !L.fits(next.x, next.z, T.radius, next.y, 3, T.height)
         || next.y < L.at(next.x, next.z).floor;
       if (!hitWall) this.pos.copy(next);
-      this.model.root.position.copy(this.pos);
       this.yaw = Math.atan2(this.dash.x, this.dash.z);
-      this.model.root.rotation.y = this.yaw;
       const c = this.center();
       const horiz = Math.hypot(p.pos.x - c.x, p.pos.z - c.z);
       if (!p.dead && horiz < T.radius + p.radius + .15 && c.y > p.pos.y - .2 && c.y < p.pos.y + p.height + .2) {
         p.hurt(randInt(T.melee), c, g);
         g.sound.play('bite', c);
         // Bounce back off the player.
-        const back = new THREE.Vector3(-dx, 0, -dz).normalize().multiplyScalar(.6);
+        const back = new Vec3(-dx, 0, -dz).normalize().multiplyScalar(.6);
         this.endCharge();
         this.retreat = 1.2;
         this.cooldown = 2 + Math.random() * 1.5;
@@ -365,8 +354,7 @@ export class Enemy {
     }
     this.turnTo(this.sees ? toPlayer : Math.atan2(vx, vz || 1e-6), dt, 6);
     this.flyPhysics(dt, g, vx, vz);
-    this.pose('jaw', .2 + Math.abs(Math.sin(this.anim * 9)) * .3);
-    this.pulse();
+    this.idleAnim();
   }
 
   endCharge() {
@@ -421,7 +409,7 @@ export class Enemy {
   shoot(g) {
     const T = this.def, p = g.player;
     const fx = Math.sin(this.yaw), fz = Math.cos(this.yaw);
-    const origin = new THREE.Vector3(
+    const origin = new Vec3(
       this.pos.x + fx * (T.radius + .35),
       this.pos.y + T.height * (this.type === 'boss' ? .75 : .7),
       this.pos.z + fz * (T.radius + .35),
@@ -433,7 +421,7 @@ export class Enemy {
     const spread = .13;
     for (let i = 0; i < count; i++) {
       const a = (i - (count - 1) / 2) * spread;
-      const dir = base.clone().applyAxisAngle(THREE.Object3D.DEFAULT_UP, a);
+      const dir = base.clone().rotateY(a);
       g.spawnProjectile(origin, dir, this.type === 'boss' ? 15 : 13, randInt(T.missile), this, this.type === 'boss');
     }
     g.sound.play('fireball', origin);
@@ -456,121 +444,58 @@ export class Enemy {
     }
   }
 
+  // Skulls burst into flame; anything else either falls down dead or, if the
+  // last hit took it well past zero, comes apart in a shower of gibs.
   die(g, dir, amount) {
     this.dead = true;
     this.state = 'dead';
-    this.model.material.userData.uniforms.flash.value = 0;
+    this.deadT = 0;
+    this.flash = 0;
     g.sound.play('death', this.pos);
-    g.sound.play('gib', this.pos);
     if (this.glow) g.lights.remove(this.glow);
-    const s = this.def.scale, h = this.def.height;
-    if (this.def.fly) g.explosion(this.center(), false, false);
-    else g.blood(this.pos.x, this.pos.y + h * .55, this.pos.z, this.type === 'boss' ? 160 : 45, 3 + s);
-    g.debris.explode(this.model.root, this.type === 'boss' ? 7 : 4 + Math.min(4, amount / 20), dir);
+    const h = this.def.height, s = this.def.scale;
+    if (this.def.fly) {
+      g.explosion(this.center(), false, false);
+      this.gone = true;
+    } else if (this.type !== 'boss' && this.hp < -this.def.hp * .3) {
+      g.sound.play('gib', this.pos);
+      g.blood(this.pos.x, this.pos.y + h * .55, this.pos.z, 60, 3 + s);
+      g.gibs.burst(this.pos.x, this.pos.y + h * .5, this.pos.z, 7 + Math.min(5, amount / 15) | 0, 4 + s, dir);
+      this.gone = true;
+    } else {
+      g.blood(this.pos.x, this.pos.y + h * .55, this.pos.z, this.type === 'boss' ? 120 : 30, 2 + s);
+      g.gibs.burst(this.pos.x, this.pos.y + h * .5, this.pos.z, this.type === 'boss' ? 10 : 2, 3 + s, dir);
+    }
     g.onEnemyDeath(this);
   }
 
   // ------------------------------------------------------------ animation
 
-  // Rotate a part relative to its sculpted rest pose.
-  pose(name, x = 0, y = 0, z = 0) {
-    const p = this.model.parts[name];
-    if (!p) return;
-    const r = this.model.rest[name] || ZERO;
-    p.rotation.set(r[0] + x, r[1] + y, r[2] + z);
-  }
-
-  // Veins and the boss's core throb; `extra` makes them flare during attacks.
-  pulse(extra = 0) {
-    this.model.material.userData.uniforms.glowStrength.value = this.glowBase * (1 + .25 * Math.sin(this.anim * 2.6 + this.seed) + extra);
-    this.model.parts.core?.scale.setScalar(1 + Math.sin(this.anim * 5) * .15 + extra * .5);
+  setShow(anim, frame) {
+    this.show.anim = anim;
+    this.show.frame = frame;
   }
 
   idleAnim() {
-    const b = Math.sin(this.anim * 2 + this.seed);
-    this.model.parts.body.position.y = this.bodyY;
-    this.pose('body', b * .03);
-    this.pose('head', b * -.03, Math.sin(this.anim * .5 + this.seed) * .45);
-    this.pose('jaw', Math.max(0, b) * .1);
-    this.pose('armL', b * .05);
-    this.pose('armR', -b * .05);
-    for (const n of ['foreL', 'foreR', 'thighL', 'thighR', 'shinL', 'shinR']) this.pose(n);
-    this.pulse();
+    // Skulls chatter their jaws; everything else stands still.
+    this.setShow('idle', this.def.fly ? ((this.anim * 6 + this.seed) | 0) % 2 : 0);
   }
 
   walkAnim(dt, speed) {
     const rate = this.type === 'boss' ? 1.1 : this.type === 'brute' ? 1.6 : 2.4;
     this.walkPhase += dt * speed * rate;
     this.swing = lerp(this.swing, speed > 0 ? 1 : 0, Math.min(1, dt * 8));
-    const w = this.swing, s = Math.sin(this.walkPhase), c = Math.cos(this.walkPhase), a = s * .6 * w;
-    this.pose('thighL', -a);
-    this.pose('thighR', a);
-    this.pose('shinL', Math.max(0, c) * .7 * w);
-    this.pose('shinR', Math.max(0, -c) * .7 * w);
-    this.pose('armL', a * .7);
-    this.pose('armR', -a * .7);
-    this.pose('foreL', -Math.max(0, s) * .3 * w);
-    this.pose('foreR', -Math.max(0, -s) * .3 * w);
-    this.pose('body', .08 * w, 0, s * .05 * w);
-    this.pose('head', -.06 * w);
-    this.pose('jaw', .1 + Math.sin(this.anim * 3) * .08);
-    this.model.parts.body.position.y = this.bodyY + Math.abs(c) * .05 * w;
-    this.pulse();
+    if (this.swing < .3) this.setShow('idle', 0);
+    else this.setShow('walk', ((this.walkPhase / (Math.PI / 2)) | 0) % 4);
   }
 
   attackPose() {
     const k = 1 - this.timer / this.attackLen;
-    const wind = Math.min(1, k * 2), strike = Math.max(0, k * 2 - 1);
-    this.pose('thighL', -.15 * wind);
-    this.pose('thighR', .1 * wind);
-    this.pose('shinL', .2 * wind);
-    this.pose('shinR', .1 * wind);
-    if (this.type === 'brute') {
-      this.pose('body', lerp(0, .35, wind) - strike * .25);
-      this.pose('head', -.25 * wind);
-      this.pose('jaw', strike > 0 ? lerp(.8, -.1, strike) : lerp(0, .8, wind));
-      this.pose('armL', -1.1 * wind + strike * .6);
-      this.pose('armR', -1.1 * wind + strike * .6);
-      this.pose('foreL', -.4 * wind);
-      this.pose('foreR', -.4 * wind);
-      this.pulse(wind * .5);
-      return;
-    }
-    if (this.type === 'imp' && this.kind === 'melee') {
-      const arm = lerp(0, -1.6, wind) + strike * 1.9;
-      this.pose('armL', arm, 0, .1);
-      this.pose('armR', arm, 0, -.1);
-      this.pose('foreL', -.3 * wind + strike * .6);
-      this.pose('foreR', -.3 * wind + strike * .6);
-      this.pose('body', -.1 * wind + strike * .35);
-      this.pose('jaw', .35 * wind);
-      this.pulse(wind * .6);
-      return;
-    }
-    if (this.type === 'boss') {
-      this.model.parts.body.position.y = this.bodyY + (this.kind === 'melee' ? wind * .35 - strike * .45 : 0);
-      const arm = lerp(0, -2.3, wind) + strike * 1.4;
-      this.pose('armL', arm, 0, .15);
-      this.pose('armR', arm, 0, -.15);
-      this.pose('foreL', -.4 * wind);
-      this.pose('foreR', -.4 * wind);
-      this.pose('body', -.15 * wind + strike * .25);
-      this.pose('head', .15 * wind - strike * .2);
-      this.pose('jaw', .5 * wind);
-      this.pulse(wind * 1.2 - strike * .8);
-      return;
-    }
-    // Imp throw: right arm winds back over the shoulder, then whips forward.
-    this.pose('armR', lerp(0, 2.4, wind) - strike * 3.4, 0, -.1);
-    this.pose('foreR', lerp(0, -1.2, wind) + strike * 1.1);
-    this.pose('armL', -.3 * wind, 0, .1);
-    this.pose('body', -.12 * wind + strike * .3, .2 * wind - strike * .4);
-    this.pose('jaw', .4 * wind);
-    this.pulse(wind * .8);
+    const anim = this.type === 'brute' || this.kind === 'melee' ? 'melee' : 'ranged';
+    this.setShow(anim, k < .35 ? 0 : k < .6 ? 1 : 2);
   }
 
   dispose(g) {
-    if (!this.dead) g.scene.remove(this.model.root);
     if (this.glow) g.lights.remove(this.glow);
   }
 }
@@ -586,21 +511,14 @@ export class Projectile {
     this.big = big;
     this.radius = big ? .32 : .2;
     this.life = 6;
-    this.group = new THREE.Group();
-    const core = new THREE.Mesh(g.fx.ballGeo, g.fx.ballMat);
-    core.scale.setScalar(this.radius);
-    const halo = new THREE.Sprite(g.fx.haloMat);
-    halo.scale.setScalar(this.radius * 7);
-    this.group.add(core, halo);
-    this.group.position.copy(this.pos);
-    g.scene.add(this.group);
-    this.light = g.lights.add({ pos: this.pos, color: 0xff6a20, intensity: big ? 30 : 16, range: big ? 8 : 6, dynamic: true });
+    this.age = 0;
+    this.light = g.lights.add({ pos: this.pos, color: 0xff6a20, intensity: big ? 30 : 16, range: big ? 8 : 6 });
   }
 
   update(dt, g) {
     this.life -= dt;
+    this.age += dt;
     this.pos.addScaledVector(this.vel, dt);
-    this.group.position.copy(this.pos);
     for (let i = 0; i < (this.big ? 3 : 2); i++) {
       g.fire.spawn(
         this.pos.x + (Math.random() - .5) * this.radius, this.pos.y + (Math.random() - .5) * this.radius, this.pos.z + (Math.random() - .5) * this.radius,
@@ -642,7 +560,6 @@ export class Projectile {
   }
 
   dispose(g) {
-    g.scene.remove(this.group);
     g.lights.remove(this.light);
   }
 }
