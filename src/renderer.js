@@ -120,7 +120,7 @@ export class Renderer {
         for (const [ox, oz] of [[-1, -1], [0, -1], [-1, 0], [0, 0]]) {
           const c = L.cell(i + ox, j + oz);
           // Doors are lit from both sides; secret walls like the walls they hide in.
-          if (L.blocked(c) && (!c.door || c.door.type === 'secret')) continue;
+          if (L.blocked(c) && (!c.door || c.door.secret)) continue;
           if (c.sky) sky++;
           pts.push({ x: i + (ox ? -.3 : .3), y: c.floor + Math.min(1, (c.ceil - c.floor) * .5), z: j + (oz ? -.3 : .3) });
         }
@@ -319,7 +319,7 @@ export class Renderer {
         const nk = ni < 0 ? SOLID : kind[ni];
 
         if (nk & SOLID) {
-          this.wall(x, top, bot, cc, cf, t1, this.wallT[ni] || this.tex.stone, along, hx, hz, dim, null);
+          this.wall(x, top, bot, cc, cf, t1, this.wallT[ni] || this.tex.stone, along, hx, hz, dim);
           top = bot;
           break;
         }
@@ -327,7 +327,7 @@ export class Renderer {
         // A step up: its face hides everything below its top edge.
         if (nf > cf) {
           const hi = Math.min(nf, cc);
-          this.wall(x, top, bot, hi, cf, t1, this.sideT[ni], along, hx, hz, dim, null);
+          this.wall(x, top, bot, hi, cf, t1, this.sideT[ni], along, hx, hz, dim);
           bot = Math.max(top, Math.min(bot, Math.ceil(yOf(hi, t1) - .5)));
         }
         // A lower ceiling (or a door): its face hides everything above its bottom edge.
@@ -336,13 +336,15 @@ export class Renderer {
           if (nk & DOOR) {
             // The wall above the doorway, then the door slab itself. Secret
             // doors wear the texture of the wall they hide in.
-            const door = this.doorAt[ni], secret = door.type === 'secret';
-            const lintel = Math.max(lo, this.ceilH[ni]);
-            if (lintel < cc) this.wall(x, top, bot, cc, lintel, t1, secret ? this.wallT[ni] : this.sideT[ni], along, hx, hz, dim, null);
-            if (secret) this.wall(x, top, bot, Math.min(cc, lintel), lo, t1, this.wallT[ni], along, hx, hz, dim, null, side, door);
-            else this.wall(x, top, bot, Math.min(cc, lintel), lo, t1, this.tex[DOOR_TEX[door.type]], along, hx, hz, dim, door, side);
+            const door = this.doorAt[ni], lintel = Math.max(lo, this.ceilH[ni]), hi = Math.min(cc, lintel);
+            if (lintel < cc) this.wall(x, top, bot, cc, lintel, t1, door.secret ? this.wallT[ni] : this.sideT[ni], along, hx, hz, dim);
+            // A secret door's texture sits a few texels out of line with the
+            // wall around it (the tell; off every brick and panel size), and
+            // rises with it.
+            if (door.secret) this.wall(x, top, bot, hi, lo, t1, this.wallT[ni], along, hx, hz, dim, 5, door.pos + 3 / TEXEL);
+            else this.doorSlab(x, top, bot, hi, lo, t1, this.tex[DOOR_TEX[door.type]], along, hx, hz, dim, door, side);
           } else {
-            this.wall(x, top, bot, cc, lo, t1, this.sideT[ni], along, hx, hz, dim, null);
+            this.wall(x, top, bot, cc, lo, t1, this.sideT[ni], along, hx, hz, dim);
           }
           top = Math.min(bot, Math.max(top, Math.ceil(yOf(lo, t1) - .5)));
         }
@@ -360,34 +362,34 @@ export class Renderer {
     }
   }
 
-  // Draw a vertical face between heights lo..hi at distance t, clipped to the
-  // open rows top..bot of column x. `side` is 1 when the face runs along x.
-  // `door` maps a door texture onto the slab; `secret` is a secret door.
-  wall(x, top, bot, hi, lo, t, tex, along, hx, hz, dim, door, side = 0, secret = null) {
+  // A wall face between heights lo..hi at distance t, clipped to the open rows
+  // top..bot of column x. The texture is world-aligned; `shift` (texels) and
+  // `lift` (metres) move it along and up.
+  wall(x, top, bot, hi, lo, t, tex, along, hx, hz, dim, shift = 0, lift = 0) {
+    this.face(x, top, bot, hi, lo, t, tex, ((along * TEXEL + shift) | 0) & tex.mask, (lift - this.ey) * TEXEL, TEXEL, false, hx, hz, dim);
+  }
+
+  // A door slab: the door texture spread once across the door's width (`side`
+  // is 1 when the door runs along x) and height, riding up as it opens.
+  doorSlab(x, top, bot, hi, lo, t, tex, along, hx, hz, dim, door, side) {
+    const size = tex.size, k = size / door.height;
+    const a0 = side ? door.minX : door.minZ, len = side ? door.maxX - door.minX : door.maxZ - door.minZ;
+    const u = Math.min(size - 1, Math.max(0, ((along - a0) / len * size) | 0));
+    // texel row = (bottom + height - worldY) * k
+    this.face(x, top, bot, hi, lo, t, tex, u, (door.floor + door.pos + door.height - this.ey) * k, k, true, hx, hz, dim);
+  }
+
+  // Draw texel column u of a face: row v0 at eye height, `scale` texels per
+  // metre, wrapping (or clamped, for door slabs) vertically.
+  face(x, top, bot, hi, lo, t, tex, u, v0, scale, clamp, hx, hz, dim) {
     const { W, F, HZ, ey } = this;
     const ys = Math.max(top, Math.ceil(HZ - (hi - ey) * F / t - .5)), ye = Math.min(bot, Math.ceil(HZ - (lo - ey) * F / t - .5));
     if (ys >= ye) return;
-    const data = tex.data, m = tex.mask, size = tex.size;
-    let u, v0, dv;
-    if (door) {
-      const a0 = side ? door.minX : door.minZ, len = side ? door.maxX - door.minX : door.maxZ - door.minZ;
-      u = Math.min(size - 1, Math.max(0, ((along - a0) / len * size) | 0));
-      const bottom = door.floor + door.pos, k = size / door.height;
-      // texel row = (bottom + height - worldY) * k
-      v0 = (bottom + door.height - ey) * k;
-      dv = k * t / F;
-    } else {
-      // A secret door's texture sits a few texels out of line with the wall
-      // around it (the tell; off every brick and panel size), and rises with it.
-      const su = secret ? 5 : 0, sv = secret ? secret.pos + 3 / TEXEL : 0;
-      u = ((along * TEXEL + su) | 0) & m;
-      v0 = (sv - ey) * TEXEL;
-      dv = TEXEL * t / F;
-    }
+    const data = tex.data, m = tex.mask, size = tex.size, dv = scale * t / F;
     for (let y = ys; y < ye; y++) {
       const off = y + .5 - HZ, wy = ey - off * t / F;
       let vi = (v0 + off * dv) | 0;
-      vi = door ? Math.min(size - 1, Math.max(0, vi)) : vi & m;
+      vi = clamp ? Math.min(size - 1, Math.max(0, vi)) : vi & m;
       this.put(y * W + x, y * W + x, data[vi * size + u], hx, wy, hz, t, dim);
     }
   }

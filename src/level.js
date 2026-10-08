@@ -121,7 +121,7 @@ export class Level {
   groupDoors() {
     for (const c of this.cells) {
       if (!c.doorType || c.door) continue;
-      const door = { type: c.doorType, cells: [], pos: 0, target: 0, floor: c.floor, ceil: c.ceil };
+      const door = { type: c.doorType, secret: c.doorType === 'secret', cells: [], pos: 0, target: 0, floor: c.floor, ceil: c.ceil };
       const stack = [c];
       c.door = door;
       while (stack.length) {

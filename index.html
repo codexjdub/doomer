@@ -74,7 +74,7 @@
   <script>
     // Explain load failures instead of sitting on "Loading…" forever.
     function doomerLoadFailed(title, html) {
-      if (window.game) return;
+      if (window.doomerStarted) return;
       var b = document.querySelector('[data-action="play"]');
       b.textContent = title;
       document.querySelector('#screen-title .tag').innerHTML = html;

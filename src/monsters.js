@@ -706,6 +706,14 @@ export function* rigSteps(type) {
   return rig;
 }
 
+// The source of everything that shapes and paints the monsters, so saved
+// sprites can tell when it changes (see spritecache.js): the meshing code,
+// and every rig with its functions written out.
+export function rigSource() {
+  const code = [noise3, smooth, ellipsoid, sphere, cone, field, surfaceNet, buildPart, copy, scale, mix].map(String).join('\n');
+  return code + JSON.stringify(Object.values(RIGS).map((rig) => rig()), (k, v) => (typeof v === 'function' ? String(v) : v));
+}
+
 // The rig for a monster type with every part meshed (cached).
 export function monsterRig(type) {
   if (!cache[type]) for (const _ of rigSteps(type));

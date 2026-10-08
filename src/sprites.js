@@ -3,7 +3,7 @@
 // side, back three-quarter, back; the other three angles are mirror images)
 // for every frame of every animation, the way Doom's sprites were made from
 // models. The game then just picks a picture.
-import { monsterRig, rigSteps } from './monsters.js';
+import { monsterRig, rigSteps, rigSource } from './monsters.js';
 import { OPAQUE, BRIGHT } from './renderer.js';
 import { byte } from './textures.js';
 import { norm, lerp } from './vec.js';
@@ -347,6 +347,19 @@ export function shrink(zb, cb, w, h, sw, glowColor) {
 
 export { SS, mul, eulerXYZ, translate, scaleM };
 
+// Bump this when a change to how sprites are drawn should replace the copies
+// saved in players' browsers but isn't in spriteSource() below: helpers from
+// other modules (byte, norm) or the meaning of OPAQUE and BRIGHT.
+const SPRITE_VERSION = 1;
+
+// Everything the baked sprites depend on, as text, for the saved copies'
+// fingerprint (see spritecache.js).
+export function spriteSource() {
+  return [SPRITE_VERSION, PPM, SS, VIEWS, OPAQUE, BRIGHT, JSON.stringify({ LIGHT, LOOK, DETAIL, ANIMS, DEATH }),
+    makePose, walkPose, attackPose, painPose, jawPose, eulerXYZ, mul, translate, scaleM,
+    cone, detailTris, bakeFrame, rasterize, shrink, rigSource()].map(String).join('\n');
+}
+
 // ---------------------------------------------------------------- lookup
 
 const sheets = {}, baking = {};
@@ -378,17 +391,23 @@ function* bakeSteps(type) {
 }
 
 // Carry a type's bake on for about `budget` ms; the sheet once it is done.
+// A bake that throws is dropped, so the next call starts afresh.
 function advance(type, budget) {
   if (sheets[type]) return sheets[type];
   const it = baking[type] || (baking[type] = bakeSteps(type));
   const t0 = performance.now();
-  for (;;) {
-    const r = it.next();
-    if (r.done) {
-      delete baking[type];
-      return (sheets[type] = r.value);
+  try {
+    for (;;) {
+      const r = it.next();
+      if (r.done) {
+        delete baking[type];
+        return (sheets[type] = r.value);
+      }
+      if (performance.now() - t0 > budget) return null;
     }
-    if (performance.now() - t0 > budget) return null;
+  } catch (err) {
+    delete baking[type];
+    throw err;
   }
 }
 

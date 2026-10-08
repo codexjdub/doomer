@@ -215,7 +215,7 @@ export class Automap {
   drawCells(ctx, s) {
     const L = this.game.level, seen = this.seen, w = L.w;
     // A secret wall stays a wall on the map until it has been found.
-    const wall = (n) => n.solid || (n.door?.type === 'secret' && !n.door.target);
+    const wall = (n) => n.solid || (n.door?.secret && !n.door.target);
     const floors = new Map(), walls = new Path2D(), steps = new Path2D();
     const doors = Object.fromEntries(Object.keys(DOOR).map((type) => [type, new Path2D()]));
     let c = null, i = 0;

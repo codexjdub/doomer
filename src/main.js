@@ -6,7 +6,7 @@ import { Particles, Gibs, Blasts, Lights } from './effects.js';
 import { Sound } from './audio.js';
 import { Music } from './music.js';
 import { Enemy, Projectile, rayCylinder } from './enemies.js';
-import { bakeMonster, bakeMonsterSoon, addSheet, monsterSprite, nextTask } from './sprites.js';
+import { bakeMonster, bakeMonsterSoon, addSheet, monsterSprite, nextTask, spriteSource } from './sprites.js';
 import { loadSheets, saveSheet } from './spritecache.js';
 import { gibSprites, explosionSprites, fireballSprites, skullFlameSprites } from './art.js';
 import { Arsenal } from './weapons.js';
@@ -68,9 +68,11 @@ const HAZARD = {
 const fmtTime = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Monster characters in the level layouts, and the types they spawn.
+// Monster characters in the level layouts, and the types each level spawns.
 const MONSTERS = { I: 'imp', Z: 'brute', O: 'skull', W: 'boss' };
-const monstersIn = (rows) => [...new Set([...rows.join('')].map((ch) => MONSTERS[ch]).filter(Boolean))];
+const LEVEL_MONSTERS = LEVELS.map((def) => [...new Set([...def.build().join('')].map((ch) => MONSTERS[ch]).filter(Boolean))]);
+// How long startup waits for the browser's saved sprites before baking.
+const CACHE_WAIT_MS = 2000;
 
 class Game {
   constructor() {
@@ -121,10 +123,10 @@ class Game {
   // Show the title over the first level as soon as its monsters are ready:
   // from the browser's saved copy, or baked now. The rest bake afterwards.
   async init() {
-    const all = [...new Set(LEVELS.flatMap((def) => monstersIn(def.build())))];
-    const saved = await loadSheets(all);
+    const all = [...new Set(LEVEL_MONSTERS.flat())];
+    const saved = await Promise.race([loadSheets(all, spriteSource()), sleep(CACHE_WAIT_MS).then(() => ({}))]);
     for (const [type, sheet] of Object.entries(saved)) addSheet(type, sheet);
-    const first = monstersIn(LEVELS[0].build());
+    const first = LEVEL_MONSTERS[0];
     for (let i = 0; i < first.length; i++) {
       this.hud.loading(i / first.length);
       await bakeMonsterSoon(first[i]);
@@ -154,20 +156,25 @@ class Game {
     };
     for (const type of types) {
       if (saved[type]) continue;
-      saveSheet(type, await bakeMonsterSoon(type, between));
+      try {
+        saveSheet(type, await bakeMonsterSoon(type, between));
+      } catch (err) {
+        // Leave it to be baked (and fail loudly) when a level needs it.
+        console.error(`Baking ${type} failed`, err);
+      }
     }
   }
 
   // Swap in a level: build its cells and props, bake its lighting, then
   // spawn everything. `loadout` is what the player carries in.
   loadLevel(index, loadout = null) {
-    const def = LEVELS[index], t = def.theme, rows = def.build();
+    const def = LEVELS[index], t = def.theme;
     // Finish any monster the background baking hasn't reached yet.
-    for (const type of monstersIn(rows)) bakeMonster(type);
+    for (const type of LEVEL_MONSTERS[index]) bakeMonster(type);
     this.lights.clear();
     this.levelIndex = index;
     this.def = def;
-    this.level = new Level(rows, def.presets);
+    this.level = new Level(def.build(), def.presets);
     this.gibs.level = this.level;
     this.renderer.setLevel(this.level, t);
 
@@ -265,7 +272,7 @@ class Game {
     if (this.boss) this.boss.yaw = this.def.bossYaw ?? -Math.PI / 2;
     this.player.reset(spawn, this.startLoadout);
     this.arsenal.reset();
-    this.stats = { kills: 0, total: this.enemies.length, time: 0, secrets: 0 };
+    this.stats = { kills: 0, total: this.enemies.length, time: 0 };
     this.found = new Set();
     this.flowTimer = 0;
     this.lockedMsgT = 0;
@@ -383,7 +390,7 @@ class Game {
   statsText() {
     const s = this.stats;
     return `Difficulty <b>${this.skill.label}</b><br>Time <b>${fmtTime(s.time)}</b><br>Kills <b>${s.kills} / ${s.total}</b>`
-      + (this.level.secrets ? `<br>Secrets <b>${s.secrets} / ${this.level.secrets}</b>` : '');
+      + (this.level.secrets ? `<br>Secrets <b>${this.found.size} / ${this.level.secrets}</b>` : '');
   }
 
   // ------------------------------------------------------------ main loop
@@ -582,7 +589,7 @@ class Game {
     this.lockedMsgT -= dt;
     for (const d of this.level.doors) {
       if (d.target > 0 || p.dead) continue;
-      if (d.type === 'secret') {
+      if (d.secret) {
         // Secret walls slide open after half a second of walking straight into
         // them (within about 30°, so running along a wall doesn't open them).
         const vx = clamp(p.pos.x, d.minX, d.maxX) - p.pos.x, vz = clamp(p.pos.z, d.minZ, d.maxZ) - p.pos.z, dist = Math.hypot(vx, vz);
@@ -612,7 +619,6 @@ class Game {
     const p = this.player, area = this.level.at(p.pos.x, p.pos.z).secretArea ?? -1;
     if (area < 0 || p.dead || this.found.has(area)) return;
     this.found.add(area);
-    this.stats.secrets++;
     this.hud.message('You found a secret area!');
     this.sound.play('secret');
   }
@@ -788,6 +794,8 @@ class Game {
 }
 
 function boot() {
+  // Tells the page's load-failure fallback (index.html) that the code ran.
+  window.doomerStarted = true;
   const fail = (err) => {
     console.error(err);
     const b = document.querySelector('[data-action="play"]');
